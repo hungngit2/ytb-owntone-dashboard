@@ -32,6 +32,23 @@ function build_play_pipeline_cmd(string $youtubeUrl, string $fifoPath): string
     return sprintf('nohup sh -c %s > /dev/null 2>&1 &', escapeshellarg($pipeline));
 }
 
+function extract_track_id_from_tracks_json(array $tracksResponse, string $matchBasename): ?int
+{
+    $items = $tracksResponse['tracks']['items'] ?? null;
+    if (!is_array($items)) {
+        return null;
+    }
+
+    foreach ($items as $track) {
+        $path = $track['path'] ?? '';
+        if (stripos($path, $matchBasename) !== false) {
+            return (int) $track['id'];
+        }
+    }
+
+    return null;
+}
+
 if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
     header('Content-Type: application/json');
     http_response_code(400);

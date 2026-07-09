@@ -32,4 +32,17 @@ assert_true(str_contains($playCmd, 'ffmpeg -i pipe:0'), 'play cmd pipes into ffm
 assert_true(str_contains($playCmd, "'/opt/docker/owntone/pipes/youtube.fifo'"), 'play cmd writes to escaped fifo path');
 assert_true(str_ends_with(trim($playCmd), '&'), 'play cmd is backgrounded');
 
+$fixture = [
+    'tracks' => [
+        'items' => [
+            ['id' => 42, 'path' => '/music/pipes/other.fifo', 'title' => 'other'],
+            ['id' => 99, 'path' => '/music/pipes/youtube.fifo', 'title' => 'youtube'],
+        ],
+    ],
+];
+assert_true(extract_track_id_from_tracks_json($fixture, 'youtube') === 99, 'finds matching pipe track id');
+assert_true(extract_track_id_from_tracks_json($fixture, 'nonexistent') === null, 'returns null when no match');
+assert_true(extract_track_id_from_tracks_json(['tracks' => ['items' => []]], 'youtube') === null, 'returns null for empty list');
+assert_true(extract_track_id_from_tracks_json([], 'youtube') === null, 'returns null for malformed response');
+
 echo "All backend helper tests passed.\n";
