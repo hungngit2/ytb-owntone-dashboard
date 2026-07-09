@@ -49,8 +49,40 @@ function extract_track_id_from_tracks_json(array $tracksResponse, string $matchB
     return null;
 }
 
+function handle_search(string $query): void
+{
+    if (trim($query) === '') {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'message' => 'empty query']);
+        return;
+    }
+
+    $output = shell_exec(build_yt_dlp_search_cmd($query));
+
+    if ($output === null || trim($output) === '') {
+        http_response_code(500);
+        echo json_encode(['status' => 'error', 'message' => 'search returned no results']);
+        return;
+    }
+
+    $results = json_decode($output, true);
+    if (!is_array($results)) {
+        http_response_code(500);
+        echo json_encode(['status' => 'error', 'message' => 'search output was not valid JSON']);
+        return;
+    }
+
+    echo json_encode($results);
+}
+
 if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
     header('Content-Type: application/json');
-    http_response_code(400);
-    echo json_encode(['status' => 'error', 'message' => 'not yet implemented']);
+    $action = $_POST['action'] ?? '';
+
+    if ($action === 'search') {
+        handle_search((string) ($_POST['query'] ?? ''));
+    } else {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'message' => 'unknown action']);
+    }
 }
