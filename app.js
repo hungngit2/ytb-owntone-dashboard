@@ -37,3 +37,87 @@ function mapQueueResponse(queue, currentItemId) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { isYoutubeUrl, paginate, mapPlayerResponse, mapQueueResponse };
 }
+
+let searchResults = [];
+let currentPage = 1;
+
+function renderResults() {
+  const { pageItems, page, totalPages, hasPrev, hasNext } = paginate(searchResults, currentPage, 5);
+  currentPage = page;
+
+  const list = document.getElementById('results-list');
+  list.innerHTML = '';
+
+  pageItems.forEach((item) => {
+    const row = document.createElement('div');
+    row.className = 'result-row';
+
+    const thumb = document.createElement('img');
+    thumb.src = item.thumbnail || '';
+    thumb.alt = item.title;
+    thumb.className = 'result-thumb';
+
+    const meta = document.createElement('div');
+    meta.className = 'result-meta';
+    meta.innerHTML = `<div class="result-title">${item.title}</div><div class="result-duration">${item.duration_string || ''}</div>`;
+
+    const playBtn = document.createElement('button');
+    playBtn.className = 'play-btn';
+    playBtn.textContent = 'Play';
+    playBtn.addEventListener('click', () => playFromBackend(item.webpage_url));
+
+    row.append(thumb, meta, playBtn);
+    list.appendChild(row);
+  });
+
+  document.getElementById('page-info').textContent = `${page} / ${totalPages}`;
+  document.getElementById('prev-btn').disabled = !hasPrev;
+  document.getElementById('next-btn').disabled = !hasNext;
+}
+
+async function runSearch(query) {
+  const res = await fetch('backend.php', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `action=search&query=${encodeURIComponent(query)}`,
+  });
+  const data = await res.json();
+
+  if (Array.isArray(data)) {
+    searchResults = data;
+    currentPage = 1;
+    renderResults();
+  } else {
+    showError((data && data.message) || 'Search failed');
+  }
+}
+
+function showError(message) {
+  const list = document.getElementById('results-list');
+  list.innerHTML = `<div class="result-error">${message}</div>`;
+}
+
+if (typeof document !== 'undefined') {
+  document.getElementById('search-form').addEventListener('submit', (event) => {
+    event.preventDefault();
+    const input = document.getElementById('search-input');
+    const value = input.value.trim();
+    if (!value) return;
+
+    if (isYoutubeUrl(value)) {
+      playFromBackend(value);
+    } else {
+      runSearch(value);
+    }
+  });
+
+  document.getElementById('prev-btn').addEventListener('click', () => {
+    currentPage -= 1;
+    renderResults();
+  });
+
+  document.getElementById('next-btn').addEventListener('click', () => {
+    currentPage += 1;
+    renderResults();
+  });
+}
