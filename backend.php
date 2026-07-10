@@ -75,12 +75,51 @@ function handle_search(string $query): void
     echo json_encode($results);
 }
 
+function owntone_get(string $path): array
+{
+    $ch = curl_init(OWNTONE_BASE . $path);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+    $response = curl_exec($ch);
+    curl_close($ch);
+
+    $decoded = json_decode((string) $response, true);
+    return is_array($decoded) ? $decoded : [];
+}
+
+function handle_play(string $url): void
+{
+    if (!is_youtube_url($url)) {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'message' => 'not a valid YouTube URL']);
+        return;
+    }
+
+    shell_exec('pkill -f yt-dlp 2>/dev/null');
+    shell_exec('pkill -f ffmpeg 2>/dev/null');
+
+    shell_exec(build_play_pipeline_cmd($url, YOUTUBE_FIFO_PATH));
+
+    $tracks = owntone_get('/api/library/tracks?limit=500');
+    $trackId = extract_track_id_from_tracks_json($tracks, YOUTUBE_FIFO_MATCH);
+
+    if ($trackId === null) {
+        http_response_code(500);
+        echo json_encode(['status' => 'error', 'message' => 'pipe track not found in OwnTone library']);
+        return;
+    }
+
+    echo json_encode(['status' => 'ok', 'track_id' => $trackId]);
+}
+
 if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
     header('Content-Type: application/json');
     $action = $_POST['action'] ?? '';
 
     if ($action === 'search') {
         handle_search((string) ($_POST['query'] ?? ''));
+    } elseif ($action === 'play') {
+        handle_play((string) ($_POST['url'] ?? ''));
     } else {
         http_response_code(400);
         echo json_encode(['status' => 'error', 'message' => 'unknown action']);
