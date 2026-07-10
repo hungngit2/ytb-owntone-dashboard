@@ -59,7 +59,16 @@ function renderResults() {
 
     const meta = document.createElement('div');
     meta.className = 'result-meta';
-    meta.innerHTML = `<div class="result-title">${item.title}</div><div class="result-duration">${item.duration_string || ''}</div>`;
+
+    const titleEl = document.createElement('div');
+    titleEl.className = 'result-title';
+    titleEl.textContent = item.title;
+
+    const durationEl = document.createElement('div');
+    durationEl.className = 'result-duration';
+    durationEl.textContent = item.duration_string || '';
+
+    meta.append(titleEl, durationEl);
 
     const playBtn = document.createElement('button');
     playBtn.className = 'play-btn';
@@ -76,19 +85,23 @@ function renderResults() {
 }
 
 async function runSearch(query) {
-  const res = await fetch('backend.php', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: `action=search&query=${encodeURIComponent(query)}`,
-  });
-  const data = await res.json();
+  try {
+    const res = await fetch('backend.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `action=search&query=${encodeURIComponent(query)}`,
+    });
+    const data = await res.json();
 
-  if (Array.isArray(data)) {
-    searchResults = data;
-    currentPage = 1;
-    renderResults();
-  } else {
-    showError((data && data.message) || 'Search failed');
+    if (Array.isArray(data)) {
+      searchResults = data;
+      currentPage = 1;
+      renderResults();
+    } else {
+      showError((data && data.message) || 'Search failed');
+    }
+  } catch (err) {
+    showError('Search request failed');
   }
 }
 
