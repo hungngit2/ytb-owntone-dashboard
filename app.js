@@ -137,6 +137,63 @@ async function playFromBackend(youtubeUrl) {
   }
 }
 
+let lastKnownIsPlaying = false;
+
+function applyPlayerState(player, queue) {
+  lastKnownIsPlaying = player.isPlaying;
+
+  document.getElementById('play-pause-btn').textContent = player.isPlaying ? '⏸' : '▶';
+  document.getElementById('now-title').textContent = queue.title || 'No track playing';
+  document.getElementById('volume-slider').value = player.volume;
+
+  const pct = player.durationSeconds > 0 ? (player.progressSeconds / player.durationSeconds) * 100 : 0;
+  document.getElementById('progress-fill').style.width = `${pct}%`;
+
+  document.getElementById('time-current').textContent = formatTime(player.progressSeconds);
+  document.getElementById('time-total').textContent = formatTime(player.durationSeconds);
+}
+
+function formatTime(totalSeconds) {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+async function refreshPlayerState() {
+  try {
+    const [player, queue] = await Promise.all([
+      fetch(`${owntoneBase()}/api/player`).then((r) => r.json()),
+      fetch(`${owntoneBase()}/api/queue`).then((r) => r.json()),
+    ]);
+    applyPlayerState(mapPlayerResponse(player), mapQueueResponse(queue, player.item_id));
+  } catch (err) {
+    document.getElementById('ws-status').classList.remove('ws-connected');
+  }
+}
+
+function connectWebSocket() {
+  const ws = new WebSocket(`ws://${window.location.hostname}:3689/api/v6/ws`);
+  const statusEl = document.getElementById('ws-status');
+
+  ws.addEventListener('open', () => {
+    statusEl.classList.add('ws-connected');
+    ws.send(JSON.stringify({ notify: ['player', 'queue', 'volume'] }));
+    refreshPlayerState();
+  });
+
+  ws.addEventListener('message', () => {
+    refreshPlayerState();
+  });
+
+  ws.addEventListener('close', () => {
+    statusEl.classList.remove('ws-connected');
+  });
+
+  ws.addEventListener('error', () => {
+    statusEl.classList.remove('ws-connected');
+  });
+}
+
 if (typeof document !== 'undefined') {
   document.getElementById('search-form').addEventListener('submit', (event) => {
     event.preventDefault();
@@ -160,4 +217,15 @@ if (typeof document !== 'undefined') {
     currentPage += 1;
     renderResults();
   });
+
+  document.getElementById('play-pause-btn').addEventListener('click', () => {
+    const endpoint = lastKnownIsPlaying ? 'pause' : 'play';
+    fetch(`${owntoneBase()}/api/player/${endpoint}`, { method: 'PUT' }).then(refreshPlayerState);
+  });
+
+  document.getElementById('volume-slider').addEventListener('change', (event) => {
+    fetch(`${owntoneBase()}/api/player/volume?volume=${event.target.value}`, { method: 'PUT' });
+  });
+
+  connectWebSocket();
 }
