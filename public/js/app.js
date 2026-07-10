@@ -86,7 +86,7 @@ function renderResults() {
 
 async function runSearch(query) {
   try {
-    const res = await fetch('backend.php', {
+    const res = await fetch('php/backend.php', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: `action=search&query=${encodeURIComponent(query)}`,
@@ -120,7 +120,7 @@ function owntoneBase() {
 
 async function playFromBackend(youtubeUrl) {
   try {
-    const res = await fetch('backend.php', {
+    const res = await fetch('php/backend.php', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: `action=play&url=${encodeURIComponent(youtubeUrl)}`,

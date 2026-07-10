@@ -1,5 +1,5 @@
 <?php
-require __DIR__ . '/../public/backend.php';
+require __DIR__ . '/../public/php/backend.php';
 
 function assert_true(bool $cond, string $msg): void
 {
