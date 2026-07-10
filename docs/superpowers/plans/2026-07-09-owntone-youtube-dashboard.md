@@ -451,16 +451,16 @@ assert.strictEqual(clampedHigh.page, 6, 'out-of-range high page clamps to last p
 const clampedLow = paginate(items, 0, 5);
 assert.strictEqual(clampedLow.page, 1, 'out-of-range low page clamps to first page');
 
-const player = mapPlayerResponse({ state: 'play', item_progress_ms: 15000, item_length_ms: 200000, volume: 42 });
-assert.deepStrictEqual(player, { isPlaying: true, progressSeconds: 15, durationSeconds: 200, volume: 42 }, 'maps a playing state');
+const player = mapPlayerResponse({ state: 'play', item_progress_ms: 15000, item_length_ms: 200000, volume: 42, item_id: 5 });
+assert.deepStrictEqual(player, { isPlaying: true, progressSeconds: 15, durationSeconds: 200, volume: 42, currentItemId: 5 }, 'maps a playing state');
 
-const paused = mapPlayerResponse({ state: 'pause', item_progress_ms: 0, item_length_ms: 0, volume: 0 });
+const paused = mapPlayerResponse({ state: 'pause', item_progress_ms: 0, item_length_ms: 0, volume: 0, item_id: null });
 assert.strictEqual(paused.isPlaying, false, 'maps a paused state');
 
-const queue = mapQueueResponse({ items: [{ id: 5, title: 'Now Playing Track' }], current_item_id: 5 });
-assert.deepStrictEqual(queue, { title: 'Now Playing Track' }, 'maps queue to current track title');
+const queue = mapQueueResponse({ items: [{ id: 5, title: 'Now Playing Track' }] }, 5);
+assert.deepStrictEqual(queue, { title: 'Now Playing Track' }, 'maps queue to current track title using currentItemId param');
 
-const emptyQueue = mapQueueResponse({ items: [] });
+const emptyQueue = mapQueueResponse({ items: [] }, 5);
 assert.deepStrictEqual(emptyQueue, { title: '' }, 'maps empty queue to empty title');
 
 console.log('All app.js helper tests passed.');
@@ -502,12 +502,13 @@ function mapPlayerResponse(player) {
     progressSeconds: Math.floor((player.item_progress_ms || 0) / 1000),
     durationSeconds: Math.floor((player.item_length_ms || 0) / 1000),
     volume: typeof player.volume === 'number' ? player.volume : 0,
+    currentItemId: player.item_id,
   };
 }
 
-function mapQueueResponse(queue) {
+function mapQueueResponse(queue, currentItemId) {
   const items = queue.items || [];
-  const current = items.find((item) => item.id === queue.current_item_id) || items[0];
+  const current = items.find((item) => item.id === currentItemId) || items[0];
   return { title: current ? current.title : '' };
 }
 
@@ -515,6 +516,8 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = { isYoutubeUrl, paginate, mapPlayerResponse, mapQueueResponse };
 }
 ```
+
+> **Note:** OwnTone's real `/api/queue` response has no `current_item_id` field — the currently-playing queue item is identified by matching `/api/player`'s `item_id` against a queue item's `id`. `mapQueueResponse` therefore takes `currentItemId` as an explicit second argument rather than reading it off `queue`; Task 8's `refreshPlayerState` passes `player.item_id` through (see `mapPlayerResponse`'s `currentItemId` passthrough, used there only to document the source — the raw `player.item_id` from the fetched JSON is what's threaded through, not the mapped value).
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -739,7 +742,7 @@ async function refreshPlayerState() {
     fetch(`${owntoneBase()}/api/player`).then((r) => r.json()),
     fetch(`${owntoneBase()}/api/queue`).then((r) => r.json()),
   ]);
-  applyPlayerState(mapPlayerResponse(player), mapQueueResponse(queue));
+  applyPlayerState(mapPlayerResponse(player), mapQueueResponse(queue, player.item_id));
 }
 
 function connectWebSocket() {
