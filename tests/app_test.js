@@ -1,5 +1,5 @@
 const assert = require('assert');
-const { isYoutubeUrl, paginate, mapPlayerResponse, mapQueueResponse } = require('../app.js');
+const { isYoutubeUrl, paginate, mapPlayerResponse, mapQueueResponse } = require('../public/app.js');
 
 assert.strictEqual(isYoutubeUrl('https://www.youtube.com/watch?v=abc123'), true, 'accepts watch url');
 assert.strictEqual(isYoutubeUrl('https://youtu.be/abc123'), true, 'accepts short url');

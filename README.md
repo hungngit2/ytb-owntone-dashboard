@@ -23,14 +23,31 @@ YouTube URL, and it plays through OwnTone by piping audio into a named pipe.
 - An OwnTone library pipe source already configured, e.g.
   `/opt/docker/owntone/pipes/youtube.fifo`
 
+## Project layout
+
+```
+public/   web root — point your vhost's DocumentRoot here
+  index.php     page shell
+  backend.php   search/play API (POST action=search|play)
+  app.js        vanilla JS: input handling, pagination, OwnTone sync
+  style.css     dark-mode layout
+tests/    PHP/Node unit tests for the pure/testable logic
+docs/     design spec and implementation plan
+```
+
+Only `public/` needs to be web-reachable — point your Apache/Nginx
+vhost's `DocumentRoot` (or php-fpm pool root) at `public/`, not the repo
+root, so `tests/`, `docs/`, and `.git` are never served over HTTP.
+
 ## Setup
 
-1. Deploy `backend.php`, `app.js`, `index.php`, `style.css` to your web root.
-2. Confirm the constants at the top of `backend.php` match your environment:
+1. Set your web server's document root to `public/`.
+2. Confirm the constants at the top of `public/backend.php` match your
+   environment:
    - `OWNTONE_BASE` — OwnTone's base URL (default `http://127.0.0.1:3689`)
    - `YOUTUBE_FIFO_PATH` — path to the named pipe
    - `YOUTUBE_FIFO_MATCH` — substring used to find the pipe's library track
-3. Open `index.php` in a browser on the same LAN as the server.
+3. Open the site in a browser on the same LAN as the server.
 
 ## Known items to verify on your host
 
@@ -39,13 +56,13 @@ available there) — see
 [`docs/superpowers/plans/2026-07-09-owntone-youtube-dashboard.md`](docs/superpowers/plans/2026-07-09-owntone-youtube-dashboard.md)
 for the full checklist:
 
-- **WebSocket endpoint** — `app.js` connects to
+- **WebSocket endpoint** — `public/app.js` connects to
   `ws://<host>:3689/api/v6/ws`. Confirm this matches your OwnTone version's
   actual WebSocket port/path/subprotocol; if it's wrong, playback still works
   but the live UI (progress, volume, play/pause) won't update.
 - **Search latency** — searching 30 YouTube results can take longer than
-  PHP's default `max_execution_time`. Raise the timeout for `backend.php` if
-  searches are timing out.
+  PHP's default `max_execution_time`. Raise the timeout for `public/backend.php`
+  if searches are timing out.
 - **Pipe track resolution timing** — if OwnTone only registers the fifo as a
   library track after first write (rather than at startup), the very first
   play attempt could race against that registration.
