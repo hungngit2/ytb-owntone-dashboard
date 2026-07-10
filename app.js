@@ -220,11 +220,14 @@ if (typeof document !== 'undefined') {
 
   document.getElementById('play-pause-btn').addEventListener('click', () => {
     const endpoint = lastKnownIsPlaying ? 'pause' : 'play';
-    fetch(`${owntoneBase()}/api/player/${endpoint}`, { method: 'PUT' }).then(refreshPlayerState);
+    fetch(`${owntoneBase()}/api/player/${endpoint}`, { method: 'PUT' })
+      .then(refreshPlayerState)
+      .catch(() => document.getElementById('ws-status').classList.remove('ws-connected'));
   });
 
   document.getElementById('volume-slider').addEventListener('change', (event) => {
-    fetch(`${owntoneBase()}/api/player/volume?volume=${event.target.value}`, { method: 'PUT' });
+    fetch(`${owntoneBase()}/api/player/volume?volume=${event.target.value}`, { method: 'PUT' })
+      .catch(() => document.getElementById('ws-status').classList.remove('ws-connected'));
   });
 
   connectWebSocket();
