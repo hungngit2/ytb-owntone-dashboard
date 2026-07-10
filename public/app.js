@@ -178,9 +178,24 @@ async function refreshPlayerState() {
   }
 }
 
-function connectWebSocket() {
-  const ws = new WebSocket(`ws://${window.location.hostname}:3689/api/v6/ws`);
+async function connectWebSocket() {
   const statusEl = document.getElementById('ws-status');
+
+  let websocketPort;
+  try {
+    const config = await fetch(`${owntoneBase()}/api/config`).then((r) => r.json());
+    websocketPort = config.websocket_port;
+  } catch (err) {
+    statusEl.classList.remove('ws-connected');
+    return;
+  }
+
+  if (!websocketPort) {
+    statusEl.classList.remove('ws-connected');
+    return;
+  }
+
+  const ws = new WebSocket(`ws://${window.location.hostname}:${websocketPort}/`, 'notify');
 
   ws.addEventListener('open', () => {
     statusEl.classList.add('ws-connected');
