@@ -107,7 +107,11 @@ async function runSearch(query) {
 
 function showError(message) {
   const list = document.getElementById('results-list');
-  list.innerHTML = `<div class="result-error">${message}</div>`;
+  list.innerHTML = '';
+  const errorEl = document.createElement('div');
+  errorEl.className = 'result-error';
+  errorEl.textContent = message;
+  list.appendChild(errorEl);
 }
 
 function owntoneBase() {
@@ -128,10 +132,13 @@ async function playFromBackend(youtubeUrl) {
       return;
     }
 
-    await fetch(
+    const queueRes = await fetch(
       `${owntoneBase()}/api/queue/items/add?uris=library:track:${data.track_id}&clear=true&playback=start`,
       { method: 'POST' }
     );
+    if (!queueRes.ok) {
+      showError('Failed to queue track in OwnTone');
+    }
   } catch (err) {
     showError('Play request failed');
   }
