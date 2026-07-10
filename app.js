@@ -24,12 +24,13 @@ function mapPlayerResponse(player) {
     progressSeconds: Math.floor((player.item_progress_ms || 0) / 1000),
     durationSeconds: Math.floor((player.item_length_ms || 0) / 1000),
     volume: typeof player.volume === 'number' ? player.volume : 0,
+    currentItemId: player.item_id,
   };
 }
 
-function mapQueueResponse(queue) {
+function mapQueueResponse(queue, currentItemId) {
   const items = queue.items || [];
-  const current = items.find((item) => item.id === queue.current_item_id) || items[0];
+  const current = items.find((item) => item.id === currentItemId) || items[0];
   return { title: current ? current.title : '' };
 }
 
