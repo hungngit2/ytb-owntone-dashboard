@@ -204,6 +204,25 @@ function fetch_youtube_oembed(string $url): array
     return is_array($decoded) ? $decoded : [];
 }
 
+function handle_resolve_url(string $url): void
+{
+    if (!is_youtube_url($url)) {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'message' => 'not a valid YouTube URL']);
+        return;
+    }
+
+    $oembed = fetch_youtube_oembed($url);
+
+    echo json_encode([
+        'title' => $oembed['title'] ?? $url,
+        'webpage_url' => $url,
+        'duration_string' => '',
+        'thumbnail' => $oembed['thumbnail_url'] ?? '',
+        'channel' => $oembed['author_name'] ?? '',
+    ]);
+}
+
 function handle_play(string $url): void
 {
     if (!is_youtube_url($url)) {
@@ -259,6 +278,8 @@ if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
         handle_playlist_remove((string) ($_POST['webpage_url'] ?? ''));
     } elseif ($action === 'last_search') {
         handle_last_search();
+    } elseif ($action === 'resolve_url') {
+        handle_resolve_url((string) ($_POST['url'] ?? ''));
     } else {
         http_response_code(400);
         echo json_encode(['status' => 'error', 'message' => 'unknown action']);

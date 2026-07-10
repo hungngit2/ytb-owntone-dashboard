@@ -114,6 +114,31 @@ async function runSearch(query) {
   }
 }
 
+async function resolveUrlToResult(url) {
+  try {
+    const res = await fetch('backend.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `action=resolve_url&url=${encodeURIComponent(url)}`,
+    });
+    const data = await res.json();
+
+    if (data && data.webpage_url) {
+      searchResults = [data];
+      document.getElementById('search-input').value = '';
+      if (currentView !== 'search') {
+        switchView('search');
+      } else {
+        renderResults();
+      }
+    } else {
+      showError((data && data.message) || 'Could not resolve URL');
+    }
+  } catch (err) {
+    showError('Resolve request failed');
+  }
+}
+
 function switchView(view) {
   currentView = view;
 
@@ -401,7 +426,7 @@ if (typeof document !== 'undefined') {
     if (!value) return;
 
     if (isYoutubeUrl(value)) {
-      playFromBackend(value);
+      resolveUrlToResult(value);
     } else {
       runSearch(value);
     }
