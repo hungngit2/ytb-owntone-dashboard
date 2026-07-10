@@ -45,4 +45,29 @@ assert_true(extract_track_id_from_tracks_json($fixture, 'nonexistent') === null,
 assert_true(extract_track_id_from_tracks_json(['tracks' => ['items' => []]], 'youtube') === null, 'returns null for empty list');
 assert_true(extract_track_id_from_tracks_json([], 'youtube') === null, 'returns null for malformed response');
 
+$playlistItems = [];
+$playlistItems = add_to_playlist_items($playlistItems, ['webpage_url' => 'https://youtu.be/aaa', 'title' => 'Song A']);
+$playlistItems = add_to_playlist_items($playlistItems, ['webpage_url' => 'https://youtu.be/bbb', 'title' => 'Song B']);
+assert_true(count($playlistItems) === 2, 'add_to_playlist_items appends new entries');
+assert_true($playlistItems[0]['title'] === 'Song A', 'first added entry keeps its data');
+
+$playlistItems = add_to_playlist_items($playlistItems, ['webpage_url' => 'https://youtu.be/aaa', 'title' => 'Song A Updated']);
+assert_true(count($playlistItems) === 2, 'add_to_playlist_items dedupes by webpage_url instead of appending a duplicate');
+assert_true($playlistItems[1]['title'] === 'Song A Updated', 'dedupe replaces the old entry with the new one, moved to the end');
+
+$playlistItems = remove_from_playlist_items($playlistItems, 'https://youtu.be/bbb');
+assert_true(count($playlistItems) === 1, 'remove_from_playlist_items removes the matching entry');
+assert_true($playlistItems[0]['webpage_url'] === 'https://youtu.be/aaa', 'remove_from_playlist_items leaves the non-matching entry');
+
+$tmpPlaylistFile = sys_get_temp_dir() . '/playlist_test_' . uniqid() . '/playlist.json';
+assert_true(load_playlist($tmpPlaylistFile) === [], 'load_playlist returns empty array when file does not exist');
+
+save_playlist([['webpage_url' => 'https://youtu.be/ccc', 'title' => 'Song C']], $tmpPlaylistFile);
+assert_true(file_exists($tmpPlaylistFile), 'save_playlist creates the file (and parent directory)');
+$loaded = load_playlist($tmpPlaylistFile);
+assert_true(count($loaded) === 1 && $loaded[0]['webpage_url'] === 'https://youtu.be/ccc', 'save_playlist/load_playlist round-trip preserves data');
+
+unlink($tmpPlaylistFile);
+rmdir(dirname($tmpPlaylistFile));
+
 echo "All backend helper tests passed.\n";

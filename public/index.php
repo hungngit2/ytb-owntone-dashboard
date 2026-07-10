@@ -7,37 +7,69 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div id="player-bar">
-    <div id="disc" class="disc">
-      <img id="disc-thumb" alt="">
-    </div>
-    <div class="player-info">
-      <div id="now-title">No track playing</div>
-      <div class="progress-row">
-        <span id="time-current">0:00</span>
-        <div id="progress-track"><div id="progress-fill"></div></div>
-        <span id="time-total">0:00</span>
+  <main id="app">
+    <div id="player-hero">
+      <div class="hero-art">
+        <img id="hero-bg-img" class="hero-bg-img" alt="">
+        <div class="hero-art-overlay"></div>
+
+        <div id="disc" class="hero-thumb-wrap">
+          <img id="disc-thumb" class="hero-thumb" alt="">
+        </div>
+
+        <div class="hero-text">
+          <div id="now-title">No track playing</div>
+          <div id="now-subtitle"></div>
+        </div>
+
+        <div class="hero-top-right">
+          <span id="status-badge">IDLE</span>
+          <span id="ws-status" title="OwnTone connection status">●</span>
+        </div>
+
+        <div class="hero-controls">
+          <button id="play-pause-btn" aria-label="Play/pause">▶</button>
+        </div>
+
+        <div class="hero-progress">
+          <div class="progress-times">
+            <span id="time-current">0:00</span>
+            <span id="time-total">0:00</span>
+          </div>
+          <div id="progress-track"><div id="progress-fill"></div></div>
+        </div>
+      </div>
+
+      <div class="hero-panel">
+        <form id="search-form">
+          <input id="search-input" type="text" placeholder="Tìm bài hát..." autocomplete="off">
+          <button id="search-btn" type="submit" aria-label="Search">🔍</button>
+        </form>
+
+        <div id="volume-row">
+          <div class="volume-label-row">
+            <span>🔊 Âm lượng</span>
+            <span id="volume-value">50%</span>
+          </div>
+          <input id="volume-slider" type="range" min="0" max="100" value="50">
+        </div>
       </div>
     </div>
-    <div class="player-controls">
-      <button id="play-pause-btn" aria-label="Play/pause">▶</button>
-      <input id="volume-slider" type="range" min="0" max="100" value="50">
-      <span id="ws-status" title="OwnTone connection status">●</span>
-    </div>
-  </div>
 
-  <form id="search-form">
-    <input id="search-input" type="text" placeholder="Tìm bài hát..." autocomplete="off">
-  </form>
-
-  <div id="results-container">
-    <div id="results-list"></div>
-    <div id="pagination">
-      <button id="prev-btn" type="button">Prev</button>
-      <span id="page-info"></span>
-      <button id="next-btn" type="button">Next</button>
+    <div id="view-tabs">
+      <button id="tab-search" type="button" class="view-tab active">Search</button>
+      <button id="tab-playlist" type="button" class="view-tab">Playlist</button>
     </div>
-  </div>
+
+    <div id="results-container">
+      <div id="results-list"></div>
+      <div id="pagination">
+        <button id="prev-btn" type="button">Prev</button>
+        <span id="page-info"></span>
+        <button id="next-btn" type="button">Next</button>
+      </div>
+    </div>
+  </main>
 
   <script src="app.js"></script>
 </body>

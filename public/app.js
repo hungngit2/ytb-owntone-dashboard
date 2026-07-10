@@ -39,10 +39,16 @@ if (typeof module !== 'undefined' && module.exports) {
 }
 
 let searchResults = [];
+let playlistItems = [];
 let currentPage = 1;
+let currentView = 'search';
+
+function activeItems() {
+  return currentView === 'search' ? searchResults : playlistItems;
+}
 
 function renderResults() {
-  const { pageItems, page, totalPages, hasPrev, hasNext } = paginate(searchResults, currentPage, 5);
+  const { pageItems, page, totalPages, hasPrev, hasNext } = paginate(activeItems(), currentPage, 5);
   currentPage = page;
 
   const list = document.getElementById('results-list');
@@ -64,18 +70,42 @@ function renderResults() {
     titleEl.className = 'result-title';
     titleEl.textContent = item.title;
 
+    const channelEl = document.createElement('div');
+    channelEl.className = 'result-channel';
+    channelEl.textContent = item.channel || '';
+
     const durationEl = document.createElement('div');
     durationEl.className = 'result-duration';
     durationEl.textContent = item.duration_string || '';
 
-    meta.append(titleEl, durationEl);
+    meta.append(titleEl, channelEl, durationEl);
+
+    const actions = document.createElement('div');
+    actions.className = 'result-actions';
 
     const playBtn = document.createElement('button');
     playBtn.className = 'play-btn';
     playBtn.textContent = 'Play';
     playBtn.addEventListener('click', () => playFromBackend(item.webpage_url, playBtn));
+    actions.appendChild(playBtn);
 
-    row.append(thumb, meta, playBtn);
+    if (currentView === 'search') {
+      const saveBtn = document.createElement('button');
+      saveBtn.className = 'save-btn';
+      saveBtn.textContent = '☆';
+      saveBtn.title = 'Lưu vào playlist';
+      saveBtn.addEventListener('click', () => saveToPlaylist(item, saveBtn));
+      actions.appendChild(saveBtn);
+    } else {
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'save-btn';
+      removeBtn.textContent = '🗑';
+      removeBtn.title = 'Xóa khỏi playlist';
+      removeBtn.addEventListener('click', () => removeFromPlaylist(item.webpage_url, removeBtn));
+      actions.appendChild(removeBtn);
+    }
+
+    row.append(thumb, meta, actions);
     list.appendChild(row);
   });
 
@@ -105,6 +135,104 @@ async function runSearch(query) {
   }
 }
 
+function switchView(view) {
+  currentView = view;
+  currentPage = 1;
+
+  document.getElementById('tab-search').classList.toggle('active', view === 'search');
+  document.getElementById('tab-playlist').classList.toggle('active', view === 'playlist');
+
+  if (view === 'playlist') {
+    loadPlaylist();
+  } else {
+    renderResults();
+  }
+}
+
+async function loadPlaylist() {
+  try {
+    const res = await fetch('backend.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'action=playlist_list',
+    });
+    const data = await res.json();
+
+    if (Array.isArray(data)) {
+      playlistItems = data;
+      renderResults();
+    } else {
+      showError((data && data.message) || 'Failed to load playlist');
+    }
+  } catch (err) {
+    showError('Playlist request failed');
+  }
+}
+
+async function saveToPlaylist(item, triggerBtn) {
+  if (triggerBtn) {
+    triggerBtn.disabled = true;
+  }
+
+  try {
+    const res = await fetch('backend.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body:
+        'action=playlist_add' +
+        `&webpage_url=${encodeURIComponent(item.webpage_url || '')}` +
+        `&title=${encodeURIComponent(item.title || '')}` +
+        `&thumbnail=${encodeURIComponent(item.thumbnail || '')}` +
+        `&duration_string=${encodeURIComponent(item.duration_string || '')}` +
+        `&channel=${encodeURIComponent(item.channel || '')}`,
+    });
+    const data = await res.json();
+
+    if (data.status === 'ok') {
+      playlistItems = data.items;
+      if (triggerBtn) {
+        triggerBtn.textContent = '★';
+      }
+    } else {
+      showError(data.message || 'Save failed');
+    }
+  } catch (err) {
+    showError('Save request failed');
+  } finally {
+    if (triggerBtn) {
+      triggerBtn.disabled = false;
+    }
+  }
+}
+
+async function removeFromPlaylist(webpageUrl, triggerBtn) {
+  if (triggerBtn) {
+    triggerBtn.disabled = true;
+  }
+
+  try {
+    const res = await fetch('backend.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `action=playlist_remove&webpage_url=${encodeURIComponent(webpageUrl)}`,
+    });
+    const data = await res.json();
+
+    if (data.status === 'ok') {
+      playlistItems = data.items;
+      renderResults();
+    } else {
+      showError(data.message || 'Remove failed');
+    }
+  } catch (err) {
+    showError('Remove request failed');
+  } finally {
+    if (triggerBtn) {
+      triggerBtn.disabled = false;
+    }
+  }
+}
+
 function showError(message) {
   const list = document.getElementById('results-list');
   list.innerHTML = '';
@@ -118,19 +246,24 @@ function owntoneBase() {
   return `http://${window.location.hostname}:3689`;
 }
 
-let currentTrackInfo = { title: null, thumbnail: null };
+let currentTrackInfo = { title: null, thumbnail: null, channel: null };
 
 function renderNowPlaying(fallbackTitle) {
   const titleEl = document.getElementById('now-title');
   titleEl.classList.remove('loading');
   titleEl.textContent = currentTrackInfo.title || fallbackTitle || 'No track playing';
 
+  document.getElementById('now-subtitle').textContent = currentTrackInfo.channel || '';
+
   const thumbEl = document.getElementById('disc-thumb');
+  const heroBgImg = document.getElementById('hero-bg-img');
   if (currentTrackInfo.thumbnail) {
     thumbEl.src = currentTrackInfo.thumbnail;
     thumbEl.classList.add('visible');
+    heroBgImg.src = currentTrackInfo.thumbnail;
   } else {
     thumbEl.classList.remove('visible');
+    heroBgImg.removeAttribute('src');
   }
 }
 
@@ -159,7 +292,7 @@ async function playFromBackend(youtubeUrl, triggerBtn) {
       return;
     }
 
-    currentTrackInfo = { title: data.title || null, thumbnail: data.thumbnail || null };
+    currentTrackInfo = { title: data.title || null, thumbnail: data.thumbnail || null, channel: data.channel || null };
     renderNowPlaying();
     document.getElementById('search-input').value = '';
 
@@ -188,8 +321,16 @@ function applyPlayerState(player, queue) {
   lastKnownIsPlaying = player.isPlaying;
 
   document.getElementById('play-pause-btn').textContent = player.isPlaying ? '⏸' : '▶';
+  document.getElementById('disc').classList.toggle('spinning', player.isPlaying);
+
+  const badgeEl = document.getElementById('status-badge');
+  badgeEl.textContent = player.isPlaying ? 'PLAYING' : 'IDLE';
+  badgeEl.classList.toggle('playing', player.isPlaying);
+
   renderNowPlaying(queue.title);
+
   document.getElementById('volume-slider').value = player.volume;
+  document.getElementById('volume-value').textContent = `${player.volume}%`;
 
   const pct = player.durationSeconds > 0 ? (player.progressSeconds / player.durationSeconds) * 100 : 0;
   document.getElementById('progress-fill').style.width = `${pct}%`;
@@ -268,6 +409,9 @@ if (typeof document !== 'undefined') {
     }
   });
 
+  document.getElementById('tab-search').addEventListener('click', () => switchView('search'));
+  document.getElementById('tab-playlist').addEventListener('click', () => switchView('playlist'));
+
   document.getElementById('prev-btn').addEventListener('click', () => {
     currentPage -= 1;
     renderResults();
@@ -283,6 +427,10 @@ if (typeof document !== 'undefined') {
     fetch(`${owntoneBase()}/api/player/${endpoint}`, { method: 'PUT' })
       .then(refreshPlayerState)
       .catch(() => document.getElementById('ws-status').classList.remove('ws-connected'));
+  });
+
+  document.getElementById('volume-slider').addEventListener('input', (event) => {
+    document.getElementById('volume-value').textContent = `${event.target.value}%`;
   });
 
   document.getElementById('volume-slider').addEventListener('change', (event) => {
