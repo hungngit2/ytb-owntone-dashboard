@@ -3,6 +3,9 @@
 define('OWNTONE_BASE', 'http://127.0.0.1:3689');
 define('YOUTUBE_FIFO_PATH', '/opt/docker/owntone/pipes/youtube.fifo');
 define('YOUTUBE_FIFO_MATCH', 'youtube');
+// Path as OwnTone sees it inside its container/library config — distinct from
+// YOUTUBE_FIFO_PATH, which is the host path used to write the audio stream.
+define('OWNTONE_PIPE_DIRECTORY', '/srv/music/pipes');
 
 function is_youtube_url(string $url): bool
 {
@@ -100,7 +103,7 @@ function handle_play(string $url): void
 
     shell_exec(build_play_pipeline_cmd($url, YOUTUBE_FIFO_PATH));
 
-    $tracks = owntone_get('/api/library/tracks?limit=500');
+    $tracks = owntone_get('/api/library/files?directory=' . rawurlencode(OWNTONE_PIPE_DIRECTORY));
     $trackId = extract_track_id_from_tracks_json($tracks, YOUTUBE_FIFO_MATCH);
 
     if ($trackId === null) {
