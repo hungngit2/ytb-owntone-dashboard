@@ -28,7 +28,7 @@ assert_true(!str_contains($injected, "'foo'; rm -rf /"), 'single quotes in query
 $playCmd = build_play_pipeline_cmd('https://youtu.be/abc123', '/opt/docker/owntone/pipes/youtube.fifo');
 assert_true(str_starts_with($playCmd, 'nohup sh -c'), 'play cmd is wrapped in nohup');
 assert_true(str_contains($playCmd, 'yt-dlp --no-playlist -f bestaudio'), 'play cmd calls yt-dlp for bestaudio with playlist expansion disabled');
-assert_true(str_contains($playCmd, 'ffmpeg -i pipe:0'), 'play cmd pipes into ffmpeg');
+assert_true(str_contains($playCmd, 'ffmpeg -re -i pipe:0'), 'play cmd pipes into ffmpeg at real-time rate so OwnTone can attach as a live reader');
 assert_true(str_contains($playCmd, "'/opt/docker/owntone/pipes/youtube.fifo'"), 'play cmd writes to escaped fifo path');
 assert_true(str_ends_with(trim($playCmd), '&'), 'play cmd is backgrounded');
 
@@ -69,5 +69,18 @@ assert_true(count($loaded) === 1 && $loaded[0]['webpage_url'] === 'https://youtu
 
 unlink($tmpPlaylistFile);
 rmdir(dirname($tmpPlaylistFile));
+
+$tmpSearchFile = sys_get_temp_dir() . '/last_search_test_' . uniqid() . '/last_search.json';
+assert_true(load_last_search($tmpSearchFile) === [], 'load_last_search returns empty array when file does not exist');
+
+save_last_search([['webpage_url' => 'https://youtu.be/ddd', 'title' => 'Song D']], $tmpSearchFile);
+$loadedSearch = load_last_search($tmpSearchFile);
+assert_true(
+    count($loadedSearch) === 1 && $loadedSearch[0]['webpage_url'] === 'https://youtu.be/ddd',
+    'save_last_search/load_last_search round-trip preserves data'
+);
+
+unlink($tmpSearchFile);
+rmdir(dirname($tmpSearchFile));
 
 echo "All backend helper tests passed.\n";

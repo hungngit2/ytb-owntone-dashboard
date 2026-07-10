@@ -63,11 +63,6 @@
 
     <div id="results-container">
       <div id="results-list"></div>
-      <div id="pagination">
-        <button id="prev-btn" type="button">Prev</button>
-        <span id="page-info"></span>
-        <button id="next-btn" type="button">Next</button>
-      </div>
     </div>
   </main>
 

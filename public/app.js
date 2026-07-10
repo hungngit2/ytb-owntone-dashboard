@@ -4,20 +4,6 @@ function isYoutubeUrl(input) {
   );
 }
 
-function paginate(items, page, perPage) {
-  const totalPages = Math.max(1, Math.ceil(items.length / perPage));
-  const safePage = Math.min(Math.max(1, page), totalPages);
-  const start = (safePage - 1) * perPage;
-
-  return {
-    pageItems: items.slice(start, start + perPage),
-    page: safePage,
-    totalPages,
-    hasPrev: safePage > 1,
-    hasNext: safePage < totalPages,
-  };
-}
-
 function mapPlayerResponse(player) {
   return {
     isPlaying: player.state === 'play',
@@ -35,12 +21,11 @@ function mapQueueResponse(queue, currentItemId) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { isYoutubeUrl, paginate, mapPlayerResponse, mapQueueResponse };
+  module.exports = { isYoutubeUrl, mapPlayerResponse, mapQueueResponse };
 }
 
 let searchResults = [];
 let playlistItems = [];
-let currentPage = 1;
 let currentView = 'search';
 
 function activeItems() {
@@ -48,13 +33,12 @@ function activeItems() {
 }
 
 function renderResults() {
-  const { pageItems, page, totalPages, hasPrev, hasNext } = paginate(activeItems(), currentPage, 5);
-  currentPage = page;
+  const items = activeItems();
 
   const list = document.getElementById('results-list');
   list.innerHTML = '';
 
-  pageItems.forEach((item) => {
+  items.forEach((item) => {
     const row = document.createElement('div');
     row.className = 'result-row';
 
@@ -108,10 +92,6 @@ function renderResults() {
     row.append(thumb, meta, actions);
     list.appendChild(row);
   });
-
-  document.getElementById('page-info').textContent = `${page} / ${totalPages}`;
-  document.getElementById('prev-btn').disabled = !hasPrev;
-  document.getElementById('next-btn').disabled = !hasNext;
 }
 
 async function runSearch(query) {
@@ -125,7 +105,6 @@ async function runSearch(query) {
 
     if (Array.isArray(data)) {
       searchResults = data;
-      currentPage = 1;
       renderResults();
     } else {
       showError((data && data.message) || 'Search failed');
@@ -137,7 +116,6 @@ async function runSearch(query) {
 
 function switchView(view) {
   currentView = view;
-  currentPage = 1;
 
   document.getElementById('tab-search').classList.toggle('active', view === 'search');
   document.getElementById('tab-playlist').classList.toggle('active', view === 'playlist');
@@ -146,6 +124,26 @@ function switchView(view) {
     loadPlaylist();
   } else {
     renderResults();
+  }
+}
+
+async function loadLastSearch() {
+  try {
+    const res = await fetch('backend.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'action=last_search',
+    });
+    const data = await res.json();
+
+    if (Array.isArray(data) && data.length > 0) {
+      searchResults = data;
+      if (currentView === 'search') {
+        renderResults();
+      }
+    }
+  } catch (err) {
+    // No cached search yet, or request failed — leave the results list empty.
   }
 }
 
@@ -412,16 +410,6 @@ if (typeof document !== 'undefined') {
   document.getElementById('tab-search').addEventListener('click', () => switchView('search'));
   document.getElementById('tab-playlist').addEventListener('click', () => switchView('playlist'));
 
-  document.getElementById('prev-btn').addEventListener('click', () => {
-    currentPage -= 1;
-    renderResults();
-  });
-
-  document.getElementById('next-btn').addEventListener('click', () => {
-    currentPage += 1;
-    renderResults();
-  });
-
   document.getElementById('play-pause-btn').addEventListener('click', () => {
     const endpoint = lastKnownIsPlaying ? 'pause' : 'play';
     fetch(`${owntoneBase()}/api/player/${endpoint}`, { method: 'PUT' })
@@ -439,4 +427,5 @@ if (typeof document !== 'undefined') {
   });
 
   connectWebSocket();
+  loadLastSearch();
 }

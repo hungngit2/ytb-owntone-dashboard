@@ -6,8 +6,9 @@ define('YOUTUBE_FIFO_MATCH', 'youtube');
 // Path as OwnTone sees it inside its container/library config — distinct from
 // YOUTUBE_FIFO_PATH, which is the host path used to write the audio stream.
 define('OWNTONE_PIPE_DIRECTORY', '/srv/music/pipes');
-// Outside the web root (public/) so the raw JSON file is never web-reachable.
+// Outside the web root (public/) so the raw JSON files are never web-reachable.
 define('PLAYLIST_FILE', __DIR__ . '/../data/playlist.json');
+define('LAST_SEARCH_FILE', __DIR__ . '/../data/last_search.json');
 
 function is_youtube_url(string $url): bool
 {
@@ -29,7 +30,7 @@ function build_yt_dlp_search_cmd(string $query): string
 function build_play_pipeline_cmd(string $youtubeUrl, string $fifoPath): string
 {
     $pipeline = sprintf(
-        'yt-dlp --no-playlist -f bestaudio -o - %s | ffmpeg -i pipe:0 -f wav -ar 44100 -ac 2 pipe:1 > %s',
+        'yt-dlp --no-playlist -f bestaudio -o - %s | ffmpeg -re -i pipe:0 -f wav -ar 44100 -ac 2 pipe:1 > %s',
         escapeshellarg($youtubeUrl),
         escapeshellarg($fifoPath)
     );
@@ -70,7 +71,7 @@ function remove_from_playlist_items(array $items, string $url): array
     }));
 }
 
-function load_playlist(string $path = PLAYLIST_FILE): array
+function read_json_file(string $path): array
 {
     if (!file_exists($path)) {
         return [];
@@ -80,14 +81,34 @@ function load_playlist(string $path = PLAYLIST_FILE): array
     return is_array($decoded) ? $decoded : [];
 }
 
-function save_playlist(array $items, string $path = PLAYLIST_FILE): void
+function write_json_file(array $data, string $path): void
 {
     $dir = dirname($path);
     if (!is_dir($dir)) {
         mkdir($dir, 0755, true);
     }
 
-    file_put_contents($path, json_encode(array_values($items)));
+    file_put_contents($path, json_encode(array_values($data)));
+}
+
+function load_playlist(string $path = PLAYLIST_FILE): array
+{
+    return read_json_file($path);
+}
+
+function save_playlist(array $items, string $path = PLAYLIST_FILE): void
+{
+    write_json_file($items, $path);
+}
+
+function load_last_search(string $path = LAST_SEARCH_FILE): array
+{
+    return read_json_file($path);
+}
+
+function save_last_search(array $results, string $path = LAST_SEARCH_FILE): void
+{
+    write_json_file($results, $path);
 }
 
 function handle_playlist_list(): void
@@ -149,7 +170,14 @@ function handle_search(string $query): void
         return;
     }
 
+    save_last_search($results);
+
     echo json_encode($results);
+}
+
+function handle_last_search(): void
+{
+    echo json_encode(load_last_search());
 }
 
 function owntone_get(string $path): array
@@ -229,6 +257,8 @@ if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
         ]);
     } elseif ($action === 'playlist_remove') {
         handle_playlist_remove((string) ($_POST['webpage_url'] ?? ''));
+    } elseif ($action === 'last_search') {
+        handle_last_search();
     } else {
         http_response_code(400);
         echo json_encode(['status' => 'error', 'message' => 'unknown action']);
