@@ -27,7 +27,7 @@ function build_yt_dlp_search_cmd(string $query): string
 function build_play_pipeline_cmd(string $youtubeUrl, string $fifoPath): string
 {
     $pipeline = sprintf(
-        'yt-dlp -f bestaudio -o - %s | ffmpeg -i pipe:0 -f wav -ar 44100 -ac 2 pipe:1 > %s',
+        'yt-dlp --no-playlist -f bestaudio -o - %s | ffmpeg -i pipe:0 -f wav -ar 44100 -ac 2 pipe:1 > %s',
         escapeshellarg($youtubeUrl),
         escapeshellarg($fifoPath)
     );
@@ -90,6 +90,18 @@ function owntone_get(string $path): array
     return is_array($decoded) ? $decoded : [];
 }
 
+function fetch_youtube_oembed(string $url): array
+{
+    $ch = curl_init('https://www.youtube.com/oembed?url=' . rawurlencode($url) . '&format=json');
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+    $response = curl_exec($ch);
+    curl_close($ch);
+
+    $decoded = json_decode((string) $response, true);
+    return is_array($decoded) ? $decoded : [];
+}
+
 function handle_play(string $url): void
 {
     if (!is_youtube_url($url)) {
@@ -112,7 +124,14 @@ function handle_play(string $url): void
         return;
     }
 
-    echo json_encode(['status' => 'ok', 'track_id' => $trackId]);
+    $oembed = fetch_youtube_oembed($url);
+
+    echo json_encode([
+        'status' => 'ok',
+        'track_id' => $trackId,
+        'title' => $oembed['title'] ?? null,
+        'thumbnail' => $oembed['thumbnail_url'] ?? null,
+    ]);
 }
 
 if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {

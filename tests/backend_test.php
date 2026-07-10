@@ -27,7 +27,7 @@ assert_true(!str_contains($injected, "'foo'; rm -rf /"), 'single quotes in query
 
 $playCmd = build_play_pipeline_cmd('https://youtu.be/abc123', '/opt/docker/owntone/pipes/youtube.fifo');
 assert_true(str_starts_with($playCmd, 'nohup sh -c'), 'play cmd is wrapped in nohup');
-assert_true(str_contains($playCmd, 'yt-dlp -f bestaudio'), 'play cmd calls yt-dlp for bestaudio');
+assert_true(str_contains($playCmd, 'yt-dlp --no-playlist -f bestaudio'), 'play cmd calls yt-dlp for bestaudio with playlist expansion disabled');
 assert_true(str_contains($playCmd, 'ffmpeg -i pipe:0'), 'play cmd pipes into ffmpeg');
 assert_true(str_contains($playCmd, "'/opt/docker/owntone/pipes/youtube.fifo'"), 'play cmd writes to escaped fifo path');
 assert_true(str_ends_with(trim($playCmd), '&'), 'play cmd is backgrounded');

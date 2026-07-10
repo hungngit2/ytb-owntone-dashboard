@@ -8,7 +8,9 @@
 </head>
 <body>
   <div id="player-bar">
-    <div id="disc" class="disc"></div>
+    <div id="disc" class="disc">
+      <img id="disc-thumb" alt="">
+    </div>
     <div class="player-info">
       <div id="now-title">No track playing</div>
       <div class="progress-row">

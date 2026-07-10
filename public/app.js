@@ -73,7 +73,7 @@ function renderResults() {
     const playBtn = document.createElement('button');
     playBtn.className = 'play-btn';
     playBtn.textContent = 'Play';
-    playBtn.addEventListener('click', () => playFromBackend(item.webpage_url));
+    playBtn.addEventListener('click', () => playFromBackend(item.webpage_url, playBtn));
 
     row.append(thumb, meta, playBtn);
     list.appendChild(row);
@@ -118,7 +118,32 @@ function owntoneBase() {
   return `http://${window.location.hostname}:3689`;
 }
 
-async function playFromBackend(youtubeUrl) {
+let currentTrackInfo = { title: null, thumbnail: null };
+
+function renderNowPlaying(fallbackTitle) {
+  const titleEl = document.getElementById('now-title');
+  titleEl.classList.remove('loading');
+  titleEl.textContent = currentTrackInfo.title || fallbackTitle || 'No track playing';
+
+  const thumbEl = document.getElementById('disc-thumb');
+  if (currentTrackInfo.thumbnail) {
+    thumbEl.src = currentTrackInfo.thumbnail;
+    thumbEl.classList.add('visible');
+  } else {
+    thumbEl.classList.remove('visible');
+  }
+}
+
+async function playFromBackend(youtubeUrl, triggerBtn) {
+  if (triggerBtn) {
+    triggerBtn.disabled = true;
+    triggerBtn.textContent = '...';
+  }
+
+  const titleEl = document.getElementById('now-title');
+  titleEl.classList.add('loading');
+  titleEl.textContent = 'Đang tải...';
+
   try {
     const res = await fetch('backend.php', {
       method: 'POST',
@@ -128,9 +153,15 @@ async function playFromBackend(youtubeUrl) {
     const data = await res.json();
 
     if (data.status !== 'ok') {
+      titleEl.classList.remove('loading');
       showError(data.message || 'Play failed');
+      renderNowPlaying();
       return;
     }
+
+    currentTrackInfo = { title: data.title || null, thumbnail: data.thumbnail || null };
+    renderNowPlaying();
+    document.getElementById('search-input').value = '';
 
     const queueRes = await fetch(
       `${owntoneBase()}/api/queue/items/add?uris=library:track:${data.track_id}&clear=true&playback=start`,
@@ -140,7 +171,14 @@ async function playFromBackend(youtubeUrl) {
       showError('Failed to queue track in OwnTone');
     }
   } catch (err) {
+    titleEl.classList.remove('loading');
     showError('Play request failed');
+    renderNowPlaying();
+  } finally {
+    if (triggerBtn) {
+      triggerBtn.disabled = false;
+      triggerBtn.textContent = 'Play';
+    }
   }
 }
 
@@ -150,7 +188,7 @@ function applyPlayerState(player, queue) {
   lastKnownIsPlaying = player.isPlaying;
 
   document.getElementById('play-pause-btn').textContent = player.isPlaying ? '⏸' : '▶';
-  document.getElementById('now-title').textContent = queue.title || 'No track playing';
+  renderNowPlaying(queue.title);
   document.getElementById('volume-slider').value = player.volume;
 
   const pct = player.durationSeconds > 0 ? (player.progressSeconds / player.durationSeconds) * 100 : 0;
