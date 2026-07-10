@@ -110,6 +110,33 @@ function showError(message) {
   list.innerHTML = `<div class="result-error">${message}</div>`;
 }
 
+function owntoneBase() {
+  return `http://${window.location.hostname}:3689`;
+}
+
+async function playFromBackend(youtubeUrl) {
+  try {
+    const res = await fetch('backend.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `action=play&url=${encodeURIComponent(youtubeUrl)}`,
+    });
+    const data = await res.json();
+
+    if (data.status !== 'ok') {
+      showError(data.message || 'Play failed');
+      return;
+    }
+
+    await fetch(
+      `${owntoneBase()}/api/queue/items/add?uris=library:track:${data.track_id}&clear=true&playback=start`,
+      { method: 'POST' }
+    );
+  } catch (err) {
+    showError('Play request failed');
+  }
+}
+
 if (typeof document !== 'undefined') {
   document.getElementById('search-form').addEventListener('submit', (event) => {
     event.preventDefault();
