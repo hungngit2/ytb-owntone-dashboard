@@ -130,4 +130,43 @@ assert_true(
 unlink($tmpSearchFile);
 rmdir(dirname($tmpSearchFile));
 
+$tmpQueueFile = sys_get_temp_dir() . '/queue_state_test_' . uniqid() . '/queue_state.json';
+$emptyQueueState = load_queue_state($tmpQueueFile);
+assert_true($emptyQueueState === ['items' => [], 'current_index' => -1, 'shuffle' => false], 'load_queue_state returns an empty queue when file does not exist');
+
+save_queue_state([['webpage_url' => 'https://youtu.be/eee']], 0, true, $tmpQueueFile);
+$loadedQueueState = load_queue_state($tmpQueueFile);
+assert_true(
+    count($loadedQueueState['items']) === 1 && $loadedQueueState['current_index'] === 0 && $loadedQueueState['shuffle'] === true,
+    'save_queue_state/load_queue_state round-trip preserves items, current_index, and shuffle'
+);
+
+unlink($tmpQueueFile);
+rmdir(dirname($tmpQueueFile));
+
+$playingPlayer = ['state' => 'play', 'item_progress_ms' => 5000, 'item_length_ms' => 200000];
+assert_true(!queue_should_advance($playingPlayer, 0, 3), 'queue_should_advance is false while still playing');
+
+$midPausePlayer = ['state' => 'pause', 'item_progress_ms' => 5000, 'item_length_ms' => 200000];
+assert_true(!queue_should_advance($midPausePlayer, 0, 3), 'queue_should_advance is false for a genuine mid-track pause, not just finished');
+
+$finishedPlayer = ['state' => 'pause', 'item_progress_ms' => 199500, 'item_length_ms' => 200000];
+assert_true(queue_should_advance($finishedPlayer, 0, 3), 'queue_should_advance is true when paused at (near) the end');
+assert_true(queue_should_advance($finishedPlayer, 2, 3), 'queue_should_advance only judges "did it finish", not queue position (that is next_queue_index\'s job)');
+assert_true(!queue_should_advance($finishedPlayer, -1, 3), 'queue_should_advance is false when there is no active queue');
+
+$unknownDurationPlayer = ['state' => 'pause', 'item_progress_ms' => 0, 'item_length_ms' => 0];
+assert_true(!queue_should_advance($unknownDurationPlayer, 0, 3), 'queue_should_advance is false when duration is unknown (0) rather than guessing');
+
+assert_true(next_queue_index(0, 3, false) === 1, 'next_queue_index (sequential) moves forward by one');
+assert_true(next_queue_index(2, 3, false) === null, 'next_queue_index (sequential) stops at the end of the queue');
+assert_true(next_queue_index(0, 1, true) === null, 'next_queue_index (shuffle) has nowhere to go with only one item');
+
+$fixedPicks = [0, 0, 2]; // first two picks collide with currentIndex=0 and must be retried
+$pickIndex = 0;
+$picker = function () use ($fixedPicks, &$pickIndex) {
+    return $fixedPicks[$pickIndex++];
+};
+assert_true(next_queue_index(0, 3, true, $picker) === 2, 'next_queue_index (shuffle) retries until it picks something other than the current index');
+
 echo "All backend helper tests passed.\n";

@@ -1,0 +1,13 @@
+[Unit]
+Description=YTB dashboard queue auto-advance daemon
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+ExecStart=/usr/bin/php /mnt/appsrv/www/ytb/queue-daemon.php
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
