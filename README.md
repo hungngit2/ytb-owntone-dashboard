@@ -102,18 +102,23 @@ path, `action=play` still does a duration lookup that can take 10-15s.
 | Constant | Meaning |
 | --- | --- |
 | `OWNTONE_BASE` | OwnTone's base URL (default `http://127.0.0.1:3689`) |
-| `YOUTUBE_FIFO_PATH` | Host path to the named pipe, for writing audio. **Must be a path the PHP-FPM user can both create files in and traverse every parent directory of** — see the permissions gotcha below. Currently `/mnt/appsrv/ytb-pipes/youtube.fifo` on the deployed host, deliberately *not* under the OwnTone docker-compose directory (see gotchas) |
+| `YOUTUBE_FIFO_PATH` | Host path to the named pipe, for writing audio. **Must be a path the PHP-FPM user can both create files in and traverse every parent directory of** — see the permissions gotcha below. Currently `/mnt/appsrv/ytb-owntone/pipes/youtube.fifo` on the deployed host, deliberately *not* under the OwnTone docker-compose directory (see gotchas) |
 | `OWNTONE_PIPE_DIRECTORY` | The same pipe's path as **OwnTone itself** sees it (e.g. inside its container/docker volume mount) — used to look up the pipe's library track id via OwnTone's API. Distinct from `YOUTUBE_FIFO_PATH` since they can differ (host path vs. container path) |
 | `YOUTUBE_FIFO_MATCH` | Substring used to find the pipe's library track by path |
-| `PLAYLIST_FILE` / `LAST_SEARCH_FILE` | **Must be an absolute path outside your web server's document root.** If your document root covers more than this app's own directory (a shared multi-app root), a path like `__DIR__ . '/../data'` can land right back inside it and become directly downloadable over HTTP — verify with `curl http://<host>/<relative-path>` and confirm it 404s. Currently `/mnt/appsrv/ytb-data/*.json` on the deployed host |
-| `QUEUE_STATE_FILE` | Persisted "what's playing" (queue items + current index + shuffle), read by `bin/queue-daemon.php` (see below) so auto-advance works with no browser open. Same outside-the-document-root rule as above. Currently `/mnt/appsrv/ytb-data/queue_state.json` |
-| `AUDIO_CACHE_DIR` | Holds at most one pre-downloaded "next track" audio file, used to make Next/auto-advance skip yt-dlp's resolve+download step (see "Preloading the next track" below). Currently `/mnt/appsrv/ytb-cache` |
+| `PLAYLIST_FILE` / `LAST_SEARCH_FILE` | **Must be an absolute path outside your web server's document root.** If your document root covers more than this app's own directory (a shared multi-app root), a path like `__DIR__ . '/../data'` can land right back inside it and become directly downloadable over HTTP — verify with `curl http://<host>/<relative-path>` and confirm it 404s. Currently `/mnt/appsrv/ytb-owntone/data/*.json` on the deployed host |
+| `QUEUE_STATE_FILE` | Persisted "what's playing" (queue items + current index + shuffle), read by `bin/queue-daemon.php` (see below) so auto-advance works with no browser open. Same outside-the-document-root rule as above. Currently `/mnt/appsrv/ytb-owntone/data/queue_state.json` |
+| `AUDIO_CACHE_DIR` | Holds at most one pre-downloaded "next track" audio file, used to make Next/auto-advance skip yt-dlp's resolve+download step (see "Preloading the next track" below). Currently `/mnt/appsrv/ytb-owntone/cache` |
 
-All of the paths above need their **directory** created and `chown`'d to the PHP-FPM/web server user *before first use* — if that directory's parent (e.g. `/mnt/appsrv`) isn't writable by that user, PHP's own `mkdir()` fallback will silently fail and the feature it backs (playlists, auto-advance, preload) will just quietly not work. E.g.:
+All three (`pipes/`, `data/`, `cache/`) live together under one parent
+directory (`/mnt/appsrv/ytb-owntone/` on the deployed host) and need to exist and
+be `chown`'d to the PHP-FPM/web server user *before first use* — if the
+parent directory's own parent (e.g. `/mnt/appsrv`) isn't writable by that
+user, PHP's own `mkdir()` fallback will silently fail and the feature it
+backs (playlists, auto-advance, preload) will just quietly not work. E.g.:
 
 ```bash
-mkdir -p /mnt/appsrv/ytb-data /mnt/appsrv/ytb-cache
-chown www-data:www-data /mnt/appsrv/ytb-data /mnt/appsrv/ytb-cache
+mkdir -p /mnt/appsrv/ytb-owntone/pipes /mnt/appsrv/ytb-owntone/data /mnt/appsrv/ytb-owntone/cache
+chown -R www-data:www-data /mnt/appsrv/ytb-owntone
 ```
 
 ### 4. OwnTone configuration

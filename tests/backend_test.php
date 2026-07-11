@@ -37,7 +37,7 @@ $cachedPlayCmd = build_play_pipeline_cmd(
     '/opt/docker/owntone/pipes/youtube.fifo',
     '/opt/docker/owntone/pipes/youtube.fifo.metadata',
     '<item><type>test</type></item>',
-    '/mnt/appsrv/ytb-cache/abc12345678.audio'
+    '/mnt/appsrv/ytb-owntone/cache/abc12345678.audio'
 );
 assert_true(str_contains($cachedPlayCmd, 'ffmpeg -re -i') && str_contains($cachedPlayCmd, 'abc12345678.audio'), 'cached play cmd reads the cache file directly via ffmpeg -i (not yt-dlp)');
 assert_true(!str_contains($cachedPlayCmd, 'yt-dlp'), 'cached play cmd skips yt-dlp entirely');
@@ -49,7 +49,7 @@ $seekPlayCmd = build_play_pipeline_cmd(
     '/opt/docker/owntone/pipes/youtube.fifo',
     '/opt/docker/owntone/pipes/youtube.fifo.metadata',
     '<item><type>test</type></item>',
-    '/mnt/appsrv/ytb-cache/abc12345678.audio',
+    '/mnt/appsrv/ytb-owntone/cache/abc12345678.audio',
     30
 );
 assert_true(str_contains($seekPlayCmd, 'ffmpeg -re -ss 30 -i'), 'seek play cmd passes -ss before -i for input seeking on the cached file');

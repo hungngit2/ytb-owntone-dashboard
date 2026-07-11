@@ -1,12 +1,14 @@
 <?php
 
 define('OWNTONE_BASE', 'http://127.0.0.1:3689');
-// Deliberately NOT under /opt/docker/owntone/pipes: that path traverses
+// All host-side app state lives under one parent directory now (pipes/
+// data/cache subfolders), outside nginx's document root and deliberately
+// NOT under /opt/docker/owntone/pipes: that path traverses
 // /mnt/appsrv/docker, whose permissions have been observed to reset to
 // block "other" access (likely on container/compose recreation), silently
 // breaking www-data's ability to write here. This path is owned by
 // www-data directly with a clean, non-restrictive traversal chain.
-define('YOUTUBE_FIFO_PATH', '/mnt/appsrv/ytb-pipes/youtube.fifo');
+define('YOUTUBE_FIFO_PATH', '/mnt/appsrv/ytb-owntone/pipes/youtube.fifo');
 define('YOUTUBE_FIFO_MATCH', 'youtube');
 // Path as OwnTone sees it inside its container/library config — distinct from
 // YOUTUBE_FIFO_PATH, which is the host path used to write the audio stream.
@@ -15,15 +17,15 @@ define('OWNTONE_PIPE_DIRECTORY', '/srv/music/pipes');
 // (root /mnt/appsrv/www;) covers this app's whole parent directory — a
 // relative "../data" would land inside /mnt/appsrv/www/data and be directly
 // web-reachable. Adjust if your document root differs.
-define('PLAYLIST_FILE', '/mnt/appsrv/ytb-data/playlist.json');
-define('LAST_SEARCH_FILE', '/mnt/appsrv/ytb-data/last_search.json');
+define('PLAYLIST_FILE', '/mnt/appsrv/ytb-owntone/data/playlist.json');
+define('LAST_SEARCH_FILE', '/mnt/appsrv/ytb-owntone/data/last_search.json');
 // Server-side "what queue/playlist and index are currently playing" state,
 // read by bin/queue-daemon.php so auto-advance-to-next-track works even
 // with no browser open — the daemon is what's watching, not any tab.
-define('QUEUE_STATE_FILE', '/mnt/appsrv/ytb-data/queue_state.json');
+define('QUEUE_STATE_FILE', '/mnt/appsrv/ytb-owntone/data/queue_state.json');
 // Holds at most one pre-downloaded "next track" audio file at a time (see
 // maybe_preload_next) — outside the web root like the other data paths.
-define('AUDIO_CACHE_DIR', '/mnt/appsrv/ytb-cache');
+define('AUDIO_CACHE_DIR', '/mnt/appsrv/ytb-owntone/cache');
 
 function is_youtube_url(string $url): bool
 {
