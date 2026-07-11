@@ -33,6 +33,17 @@ define('AUDIO_CACHE_DIR', '/mnt/appsrv/ytb-owntone/cache');
 // and pile up multiple yt-dlp+ffmpeg pairs, which is exactly what
 // exhausted memory and froze the host even after that wait loop was added.
 define('PLAYBACK_LOCK_FILE', '/mnt/appsrv/ytb-owntone/data/playback.lock');
+// Hard ceiling on concurrent yt-dlp processes (live pipeline + at most one
+// background cache-priming download), checked before every fire-and-forget
+// spawn (ensure_current_track_cached, maybe_preload_next). The lock above
+// only bounds the LIVE pipeline swap; those two background downloads
+// return immediately without waiting for the spawned process to finish,
+// so they aren't covered by the same guarantee — a burst of clicks across
+// many different search results could each kick one off, piling up beyond
+// what the lock alone prevents. This is the last line of defense against
+// that regardless of which code path or how many concurrent requests
+// triggered it.
+define('MAX_CONCURRENT_YTDLP', 2);
 
 function is_youtube_url(string $url): bool
 {
@@ -603,6 +614,12 @@ function with_playback_lock(callable $fn): array
     }
 }
 
+function running_ytdlp_count(): int
+{
+    $output = trim((string) shell_exec('pgrep -c -f yt-dlp 2>/dev/null'));
+    return $output === '' ? 0 : (int) $output;
+}
+
 function stop_existing_pipeline(): void
 {
     shell_exec('pkill -f yt-dlp 2>/dev/null');
@@ -704,6 +721,13 @@ function ensure_current_track_cached(string $url): void
     if ($cachePath === null || file_exists($cachePath) || file_exists($cachePath . '.part')) {
         return;
     }
+    // Circuit breaker: skip this optional background cache rather than
+    // add another yt-dlp process on top of whatever's already running.
+    // Losing seek-readiness/instant-switch for this one track is a far
+    // smaller cost than risking another process pile-up.
+    if (running_ytdlp_count() >= MAX_CONCURRENT_YTDLP) {
+        return;
+    }
     if (!is_dir(AUDIO_CACHE_DIR)) {
         mkdir(AUDIO_CACHE_DIR, 0755, true);
     }
@@ -769,6 +793,13 @@ function maybe_preload_next(array $items, int $currentIndex, bool $shuffle): voi
     }
 
     if ($nextCachePath === null || file_exists($nextCachePath) || file_exists($nextCachePath . '.part')) {
+        return;
+    }
+
+    // Same circuit breaker as ensure_current_track_cached: skip the
+    // preload rather than add another yt-dlp process on top of whatever's
+    // already running.
+    if (running_ytdlp_count() >= MAX_CONCURRENT_YTDLP) {
         return;
     }
 

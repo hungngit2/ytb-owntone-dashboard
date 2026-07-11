@@ -268,6 +268,29 @@ Three layers now guard against this:
    start than the UI previously implied, so the app needs to show that
    honestly instead of looking broken or idle in the meantime.
 
+The lock in (1) still wasn't the whole story: it only bounds the *live*
+pipeline swap. `ensure_current_track_cached()` and `maybe_preload_next()`
+both kick off *background* yt-dlp downloads via fire-and-forget
+`shell_exec(... &)` — these return immediately without waiting for the
+spawned process, so they aren't covered by the lock's cleanup guarantee
+the way the live pipeline is. Clicking Play across many different search
+results in quick succession (each a separate concurrent request) could
+each kick off its own background download faster than they complete,
+piling up — froze the host a third time. Two more layers close this:
+
+4. **`MAX_CONCURRENT_YTDLP` in `backend.php`** — a hard ceiling (2) on
+   concurrent yt-dlp processes, checked via `running_ytdlp_count()` before
+   every fire-and-forget spawn. If already at the ceiling, the background
+   cache/preload is skipped entirely rather than adding another process —
+   losing seek-readiness for one track is a far smaller cost than another
+   pile-up. Verified live: fired 8 concurrent play requests directly at
+   the backend (bypassing the frontend entirely) and process count never
+   exceeded 3-4 throughout.
+5. **The frontend now disables every Play button (not just the clicked
+   one)** while any play request is in flight (`playRequestInFlight` in
+   `app.js`) — stopping the burst of concurrent requests at the source,
+   rather than relying on the backend to absorb it after the fact.
+
 ## Tests
 
 ```bash

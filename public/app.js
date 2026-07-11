@@ -135,6 +135,7 @@ function renderResults() {
     const playBtn = document.createElement('button');
     playBtn.className = 'play-btn';
     playBtn.textContent = 'Play';
+    playBtn.disabled = playRequestInFlight;
     playBtn.addEventListener('click', () => playQueueItem(items, index, playBtn));
     actions.appendChild(playBtn);
 
@@ -629,13 +630,29 @@ function playRelative(offset) {
 
 let shuffleEnabled = false;
 
+// Only one play/seek/stop request in flight at a time from this tab.
+// Clicking Play on one row previously only disabled THAT row's button —
+// nothing stopped clicking Play on several other rows while the first
+// request was still in flight, firing many concurrent backend requests.
+// The backend now has its own defenses (a cross-process lock plus a hard
+// cap on concurrent yt-dlp processes), but stopping the burst at the
+// source is what actually prevents it, rather than relying on the
+// backend to absorb it after the fact.
+let playRequestInFlight = false;
+
 // Persists the whole list + starting index server-side (not just a single
 // URL) so bin/queue-daemon.php can advance through it on its own — that's
 // what makes auto-play-next survive the browser being closed, since the
 // daemon (not this tab) is what decides and acts on "did it finish".
 async function playQueueItem(items, index, triggerBtn) {
+  if (playRequestInFlight) {
+    return;
+  }
+  playRequestInFlight = true;
+  document.querySelectorAll('.play-btn').forEach((btn) => {
+    btn.disabled = true;
+  });
   if (triggerBtn) {
-    triggerBtn.disabled = true;
     triggerBtn.textContent = '...';
   }
 
@@ -683,8 +700,11 @@ async function playQueueItem(items, index, triggerBtn) {
     // pipeline can still be spinning up in the background well after the
     // play request itself returns "ok".
     updateCookingIndicator();
+    playRequestInFlight = false;
+    document.querySelectorAll('.play-btn').forEach((btn) => {
+      btn.disabled = false;
+    });
     if (triggerBtn) {
-      triggerBtn.disabled = false;
       triggerBtn.textContent = 'Play';
     }
   }
