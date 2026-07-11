@@ -28,7 +28,9 @@
         </div>
 
         <div class="hero-controls">
+          <button id="prev-btn" aria-label="Previous">⏮</button>
           <button id="play-pause-btn" aria-label="Play/pause">▶</button>
+          <button id="next-btn" aria-label="Next">⏭</button>
         </div>
 
         <div class="hero-progress">

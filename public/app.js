@@ -38,9 +38,22 @@ function renderResults() {
   const list = document.getElementById('results-list');
   list.innerHTML = '';
 
+  if (items.length === 0) {
+    const emptyEl = document.createElement('div');
+    emptyEl.className = 'results-empty';
+    emptyEl.textContent =
+      currentView === 'search' ? 'Chưa có kết quả tìm kiếm.' : 'Playlist trống — lưu bài hát từ kết quả tìm kiếm.';
+    list.appendChild(emptyEl);
+    return;
+  }
+
   items.forEach((item) => {
     const row = document.createElement('div');
     row.className = 'result-row';
+    row.dataset.url = item.webpage_url;
+    if (currentTrackInfo.webpageUrl !== null && item.webpage_url === currentTrackInfo.webpageUrl) {
+      row.classList.add('playing');
+    }
 
     const thumb = document.createElement('img');
     thumb.src = item.thumbnail || '';
@@ -162,6 +175,9 @@ function cacheLastSearch(results) {
 }
 
 async function runSearch(query) {
+  setActiveTab('search');
+  showLoading('Đang tìm kiếm...');
+
   try {
     searchResults = await searchYouTube(query);
     renderResults();
@@ -196,11 +212,14 @@ async function resolveUrlToResult(url) {
   }
 }
 
-function switchView(view) {
+function setActiveTab(view) {
   currentView = view;
-
   document.getElementById('tab-search').classList.toggle('active', view === 'search');
   document.getElementById('tab-playlist').classList.toggle('active', view === 'playlist');
+}
+
+function switchView(view) {
+  setActiveTab(view);
 
   if (view === 'playlist') {
     loadPlaylist();
@@ -322,11 +341,24 @@ function showError(message) {
   list.appendChild(errorEl);
 }
 
+function showLoading(message) {
+  const list = document.getElementById('results-list');
+  list.innerHTML = '';
+  const wrap = document.createElement('div');
+  wrap.className = 'results-loading';
+  const spinner = document.createElement('div');
+  spinner.className = 'spinner';
+  const text = document.createElement('span');
+  text.textContent = message;
+  wrap.append(spinner, text);
+  list.appendChild(wrap);
+}
+
 function owntoneBase() {
   return `http://${window.location.hostname}:3689`;
 }
 
-let currentTrackInfo = { title: null, thumbnail: null, channel: null };
+let currentTrackInfo = { title: null, thumbnail: null, channel: null, webpageUrl: null };
 
 function renderNowPlaying(fallbackTitle) {
   const titleEl = document.getElementById('now-title');
@@ -345,6 +377,33 @@ function renderNowPlaying(fallbackTitle) {
     thumbEl.classList.remove('visible');
     heroBgImg.removeAttribute('src');
   }
+
+  updatePlayingHighlight();
+}
+
+function updatePlayingHighlight() {
+  document.querySelectorAll('.result-row').forEach((row) => {
+    row.classList.toggle('playing', currentTrackInfo.webpageUrl !== null && row.dataset.url === currentTrackInfo.webpageUrl);
+  });
+}
+
+function currentPlayingIndex() {
+  return activeItems().findIndex((item) => item.webpage_url === currentTrackInfo.webpageUrl);
+}
+
+function playRelative(offset) {
+  const items = activeItems();
+  const index = currentPlayingIndex();
+  if (index === -1) {
+    return;
+  }
+
+  const targetIndex = index + offset;
+  if (targetIndex < 0 || targetIndex >= items.length) {
+    return;
+  }
+
+  playFromBackend(items[targetIndex].webpage_url);
 }
 
 async function playFromBackend(youtubeUrl, triggerBtn) {
@@ -356,6 +415,7 @@ async function playFromBackend(youtubeUrl, triggerBtn) {
   const titleEl = document.getElementById('now-title');
   titleEl.classList.add('loading');
   titleEl.textContent = 'Đang tải...';
+  document.getElementById('disc').classList.add('loading');
 
   try {
     const res = await fetch('backend.php', {
@@ -372,7 +432,12 @@ async function playFromBackend(youtubeUrl, triggerBtn) {
       return;
     }
 
-    currentTrackInfo = { title: data.title || null, thumbnail: data.thumbnail || null, channel: data.channel || null };
+    currentTrackInfo = {
+      title: data.title || null,
+      thumbnail: data.thumbnail || null,
+      channel: data.channel || null,
+      webpageUrl: youtubeUrl,
+    };
     renderNowPlaying();
     document.getElementById('search-input').value = '';
   } catch (err) {
@@ -380,6 +445,7 @@ async function playFromBackend(youtubeUrl, triggerBtn) {
     showError('Play request failed');
     renderNowPlaying();
   } finally {
+    document.getElementById('disc').classList.remove('loading');
     if (triggerBtn) {
       triggerBtn.disabled = false;
       triggerBtn.textContent = 'Play';
@@ -525,6 +591,9 @@ if (typeof document !== 'undefined') {
       .then(refreshPlayerState)
       .catch(() => document.getElementById('ws-status').classList.remove('ws-connected'));
   });
+
+  document.getElementById('prev-btn').addEventListener('click', () => playRelative(-1));
+  document.getElementById('next-btn').addEventListener('click', () => playRelative(1));
 
   document.getElementById('volume-slider').addEventListener('input', (event) => {
     document.getElementById('volume-value').textContent = `${event.target.value}%`;
