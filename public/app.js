@@ -22,12 +22,22 @@ function extractYoutubeVideoId(url) {
   return null;
 }
 
+// OwnTone has been observed returning a garbage volume (e.g. 773094144)
+// when no output is actively selected (notably right after /api/player/stop)
+// — a quirk in OwnTone's own state, not something we can fix from here.
+// Treat anything outside 0-100 as "unknown" rather than displaying it raw.
+function sanitizeVolume(rawVolume) {
+  return typeof rawVolume === 'number' && Number.isFinite(rawVolume) && rawVolume >= 0 && rawVolume <= 100
+    ? rawVolume
+    : null;
+}
+
 function mapPlayerResponse(player) {
   return {
     isPlaying: player.state === 'play',
     progressSeconds: Math.floor((player.item_progress_ms || 0) / 1000),
     durationSeconds: Math.floor((player.item_length_ms || 0) / 1000),
-    volume: typeof player.volume === 'number' ? player.volume : 0,
+    volume: sanitizeVolume(player.volume),
     currentItemId: player.item_id,
   };
 }
@@ -39,7 +49,7 @@ function mapQueueResponse(queue, currentItemId) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { isYoutubeUrl, extractYoutubeVideoId, mapPlayerResponse, mapQueueResponse };
+  module.exports = { isYoutubeUrl, extractYoutubeVideoId, mapPlayerResponse, mapQueueResponse, sanitizeVolume };
 }
 
 let searchResults = [];
@@ -659,8 +669,13 @@ function applyPlayerState(player, queue) {
 
   renderNowPlaying(queue.title);
 
-  document.getElementById('volume-slider').value = player.volume;
-  document.getElementById('volume-value').textContent = `${player.volume}%`;
+  // player.volume is null when OwnTone reported a garbage value (see
+  // sanitizeVolume) — leave the slider/label showing the last known-good
+  // reading rather than a nonsense number.
+  if (player.volume !== null) {
+    document.getElementById('volume-slider').value = player.volume;
+    document.getElementById('volume-value').textContent = `${player.volume}%`;
+  }
 
   startProgressTicker(player.isPlaying, player.progressSeconds, player.durationSeconds);
 }

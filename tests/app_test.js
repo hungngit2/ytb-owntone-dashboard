@@ -1,5 +1,5 @@
 const assert = require('assert');
-const { isYoutubeUrl, extractYoutubeVideoId, mapPlayerResponse, mapQueueResponse } = require('../public/app.js');
+const { isYoutubeUrl, extractYoutubeVideoId, mapPlayerResponse, mapQueueResponse, sanitizeVolume } = require('../public/app.js');
 
 assert.strictEqual(isYoutubeUrl('https://www.youtube.com/watch?v=abc123'), true, 'accepts watch url');
 assert.strictEqual(isYoutubeUrl('https://youtu.be/abc123'), true, 'accepts short url');
@@ -36,5 +36,16 @@ assert.deepStrictEqual(queue, { title: 'Now Playing Track' }, 'maps queue to cur
 
 const emptyQueue = mapQueueResponse({ items: [] }, 5);
 assert.deepStrictEqual(emptyQueue, { title: '' }, 'maps empty queue to empty title');
+
+assert.strictEqual(sanitizeVolume(42), 42, 'accepts an in-range volume');
+assert.strictEqual(sanitizeVolume(0), 0, 'accepts the 0 boundary');
+assert.strictEqual(sanitizeVolume(100), 100, 'accepts the 100 boundary');
+assert.strictEqual(sanitizeVolume(773094144), null, 'rejects an out-of-range value (observed from OwnTone on an unselected output)');
+assert.strictEqual(sanitizeVolume(-1), null, 'rejects a negative value');
+assert.strictEqual(sanitizeVolume(NaN), null, 'rejects NaN');
+assert.strictEqual(sanitizeVolume('50'), null, 'rejects a non-number');
+
+const garbageVolumePlayer = mapPlayerResponse({ state: 'stop', item_progress_ms: 0, item_length_ms: 0, volume: 773094144, item_id: null });
+assert.strictEqual(garbageVolumePlayer.volume, null, 'mapPlayerResponse sanitizes an out-of-range volume to null');
 
 console.log('All app.js helper tests passed.');
