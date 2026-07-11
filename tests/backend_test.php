@@ -54,7 +54,7 @@ assert_true(str_contains($item, base64_encode('Test Title')), 'metadata item bas
 $metadataXml = build_pipe_metadata_xml('My Title', 'My Artist', 125);
 assert_true(str_contains($metadataXml, base64_encode('My Title')), 'pipe metadata includes the base64 title');
 assert_true(str_contains($metadataXml, base64_encode('My Artist')), 'pipe metadata includes the base64 artist');
-assert_true(str_contains($metadataXml, base64_encode('0/0/' . (125 * 44100))), 'pipe metadata includes progress with duration converted to samples at 44100Hz');
+assert_true(str_contains($metadataXml, base64_encode('1/1/' . (1 + 125 * 44100))), 'pipe metadata includes progress with nonzero start/pos and duration converted to samples at 44100Hz');
 
 $metadataXmlNoDuration = build_pipe_metadata_xml('My Title', 'My Artist', 0);
 assert_true(!str_contains($metadataXmlNoDuration, bin2hex('prgr')), 'pipe metadata omits progress entirely when duration is unknown (0)');
