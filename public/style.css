@@ -37,7 +37,15 @@ html, body {
 body {
   display: flex;
   flex-direction: column;
+  /* 100vh on iOS Safari is the layout viewport (toolbar collapsed) —
+     when the address/toolbar is actually showing, that's taller than
+     what's really visible, so the bottom of the page (last result row)
+     ends up hidden underneath it. 100dvh tracks the real visible area;
+     the 100vh line above is a fallback for browsers that don't know the
+     dvh unit (unsupported units make the whole declaration invalid, so
+     it's simply ignored, leaving 100vh in effect). */
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
 }
 
