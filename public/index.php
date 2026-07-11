@@ -33,7 +33,9 @@
           <button id="play-pause-btn" aria-label="Play/pause">▶</button>
           <button id="next-btn" aria-label="Next">⏭</button>
           <button id="stop-btn" aria-label="Stop" title="Stop">⏹</button>
+          <button id="stream-btn" aria-label="Listen in browser" title="Listen in browser (direct stream)">🔈</button>
         </div>
+        <audio id="browser-stream-audio" preload="none"></audio>
 
         <div class="hero-progress">
           <div class="progress-times">
@@ -52,7 +54,10 @@
 
         <div id="volume-row">
           <div class="volume-label-row">
-            <span>🔊 Volume</span>
+            <span class="volume-label">
+              <button id="volume-mute-btn" type="button" aria-label="Mute/unmute" title="Mute/unmute">🔊</button>
+              Volume
+            </span>
             <span id="volume-value">50%</span>
           </div>
           <input id="volume-slider" type="range" min="0" max="100" value="50">
