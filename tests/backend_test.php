@@ -25,12 +25,39 @@ assert_true(!str_contains($searchCmd, '; rm'), 'search cmd has no unescaped inje
 $injected = build_yt_dlp_search_cmd("foo'; rm -rf /");
 assert_true(!str_contains($injected, "'foo'; rm -rf /"), 'single quotes in query are escaped, not passed through raw');
 
-$playCmd = build_play_pipeline_cmd('https://youtu.be/abc123', '/opt/docker/owntone/pipes/youtube.fifo');
+$playCmd = build_play_pipeline_cmd(
+    'https://youtu.be/abc123',
+    '/opt/docker/owntone/pipes/youtube.fifo',
+    '/opt/docker/owntone/pipes/youtube.fifo.metadata',
+    '<item><type>test</type></item>'
+);
 assert_true(str_starts_with($playCmd, 'nohup sh -c'), 'play cmd is wrapped in nohup');
 assert_true(str_contains($playCmd, 'yt-dlp --no-playlist -f bestaudio'), 'play cmd calls yt-dlp for bestaudio with playlist expansion disabled');
 assert_true(str_contains($playCmd, 'ffmpeg -re -i pipe:0'), 'play cmd pipes into ffmpeg at real-time rate so OwnTone can attach as a live reader');
-assert_true(str_contains($playCmd, "'/opt/docker/owntone/pipes/youtube.fifo'"), 'play cmd writes to escaped fifo path');
+assert_true(str_contains($playCmd, 'youtube.fifo'), 'play cmd writes to the fifo path');
+assert_true(str_contains($playCmd, 'printf'), 'play cmd writes metadata via printf');
+assert_true(str_contains($playCmd, '<item><type>test</type></item>'), 'metadata content is embedded (survives escaping since it has no quotes)');
+assert_true(str_contains($playCmd, 'youtube.fifo.metadata'), 'play cmd writes metadata to the metadata fifo path');
+assert_true(strpos($playCmd, 'printf') < strpos($playCmd, 'yt-dlp --no-playlist'), 'metadata write is backgrounded ahead of the audio pipeline, not after it');
 assert_true(str_ends_with(trim($playCmd), '&'), 'play cmd is backgrounded');
+
+$durationCmd = build_yt_dlp_duration_cmd('https://youtu.be/abc123');
+assert_true(str_contains($durationCmd, "yt-dlp --no-playlist --skip-download --print duration"), 'duration cmd asks yt-dlp for duration only, no download');
+assert_true(str_contains($durationCmd, "'https://youtu.be/abc123'"), 'duration cmd embeds the escaped url');
+
+$item = build_metadata_item('core', 'minm', 'Test Title');
+assert_true(str_contains($item, '<type>' . bin2hex('core') . '</type>'), 'metadata item hex-encodes the type tag');
+assert_true(str_contains($item, '<code>' . bin2hex('minm') . '</code>'), 'metadata item hex-encodes the code tag');
+assert_true(str_contains($item, '<length>10</length>'), 'metadata item reports the raw (non-base64) byte length');
+assert_true(str_contains($item, base64_encode('Test Title')), 'metadata item base64-encodes the data');
+
+$metadataXml = build_pipe_metadata_xml('My Title', 'My Artist', 125);
+assert_true(str_contains($metadataXml, base64_encode('My Title')), 'pipe metadata includes the base64 title');
+assert_true(str_contains($metadataXml, base64_encode('My Artist')), 'pipe metadata includes the base64 artist');
+assert_true(str_contains($metadataXml, base64_encode('0/0/' . (125 * 44100))), 'pipe metadata includes progress with duration converted to samples at 44100Hz');
+
+$metadataXmlNoDuration = build_pipe_metadata_xml('My Title', 'My Artist', 0);
+assert_true(!str_contains($metadataXmlNoDuration, bin2hex('prgr')), 'pipe metadata omits progress entirely when duration is unknown (0)');
 
 $fixture = [
     'tracks' => [

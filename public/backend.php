@@ -30,15 +30,54 @@ function build_yt_dlp_search_cmd(string $query): string
     );
 }
 
-function build_play_pipeline_cmd(string $youtubeUrl, string $fifoPath): string
+function build_play_pipeline_cmd(string $youtubeUrl, string $fifoPath, string $metadataFifoPath, string $metadataXml): string
 {
-    $pipeline = sprintf(
+    $audioPipeline = sprintf(
         'yt-dlp --no-playlist -f bestaudio -o - %s | ffmpeg -re -i pipe:0 -f wav -ar 44100 -ac 2 pipe:1 > %s',
         escapeshellarg($youtubeUrl),
         escapeshellarg($fifoPath)
     );
 
-    return sprintf('nohup sh -c %s > /dev/null 2>&1 &', escapeshellarg($pipeline));
+    $metadataWrite = sprintf('printf %s > %s', escapeshellarg($metadataXml), escapeshellarg($metadataFifoPath));
+
+    $combined = sprintf('%s & %s', $metadataWrite, $audioPipeline);
+
+    return sprintf('nohup sh -c %s > /dev/null 2>&1 &', escapeshellarg($combined));
+}
+
+function build_yt_dlp_duration_cmd(string $youtubeUrl): string
+{
+    return sprintf(
+        'yt-dlp --no-playlist --skip-download --print duration %s 2>/dev/null',
+        escapeshellarg($youtubeUrl)
+    );
+}
+
+// One shairport-sync-style metadata item: <type>/<code> are the ASCII DMAP
+// tag hex-encoded (e.g. "minm" -> 6d696e6d), <data> is base64. OwnTone's
+// parser matches purely on <code>, but real clients also send <type>
+// ("core" for regular tags, "ssnc" for shairport-specific ones like prgr).
+function build_metadata_item(string $typeTag, string $codeTag, string $data): string
+{
+    return sprintf(
+        '<item><type>%s</type><code>%s</code><length>%d</length><data encoding="base64">%s</data></item>',
+        bin2hex($typeTag),
+        bin2hex($codeTag),
+        strlen($data),
+        base64_encode($data)
+    );
+}
+
+function build_pipe_metadata_xml(string $title, string $artist, int $durationSeconds): string
+{
+    $xml = build_metadata_item('core', 'minm', $title) . build_metadata_item('core', 'asar', $artist);
+
+    if ($durationSeconds > 0) {
+        $endSamples = $durationSeconds * 44100;
+        $xml .= build_metadata_item('ssnc', 'prgr', "0/0/{$endSamples}");
+    }
+
+    return $xml;
 }
 
 function extract_track_id_from_tracks_json(array $tracksResponse, string $matchBasename): ?int
@@ -226,6 +265,16 @@ function handle_resolve_url(string $url): void
     ]);
 }
 
+function ensure_metadata_pipe_exists(string $metadataFifoPath): void
+{
+    shell_exec(sprintf(
+        'test -p %s || (mkfifo %s && chmod 777 %s)',
+        escapeshellarg($metadataFifoPath),
+        escapeshellarg($metadataFifoPath),
+        escapeshellarg($metadataFifoPath)
+    ));
+}
+
 function handle_play(string $url): void
 {
     if (!is_youtube_url($url)) {
@@ -237,7 +286,16 @@ function handle_play(string $url): void
     shell_exec('pkill -f yt-dlp 2>/dev/null');
     shell_exec('pkill -f ffmpeg 2>/dev/null');
 
-    shell_exec(build_play_pipeline_cmd($url, YOUTUBE_FIFO_PATH));
+    $oembed = fetch_youtube_oembed($url);
+    $title = $oembed['title'] ?? '';
+    $channel = $oembed['author_name'] ?? '';
+    $durationSeconds = (int) round((float) trim((string) shell_exec(build_yt_dlp_duration_cmd($url))));
+
+    $metadataFifoPath = YOUTUBE_FIFO_PATH . '.metadata';
+    ensure_metadata_pipe_exists($metadataFifoPath);
+    $metadataXml = build_pipe_metadata_xml($title, $channel, $durationSeconds);
+
+    shell_exec(build_play_pipeline_cmd($url, YOUTUBE_FIFO_PATH, $metadataFifoPath, $metadataXml));
 
     $tracks = owntone_get('/api/library/files?directory=' . rawurlencode(OWNTONE_PIPE_DIRECTORY));
     $trackId = extract_track_id_from_tracks_json($tracks, YOUTUBE_FIFO_MATCH);
@@ -248,14 +306,12 @@ function handle_play(string $url): void
         return;
     }
 
-    $oembed = fetch_youtube_oembed($url);
-
     echo json_encode([
         'status' => 'ok',
         'track_id' => $trackId,
-        'title' => $oembed['title'] ?? null,
+        'title' => $title ?: null,
         'thumbnail' => $oembed['thumbnail_url'] ?? null,
-        'channel' => $oembed['author_name'] ?? null,
+        'channel' => $channel ?: null,
     ]);
 }
 
