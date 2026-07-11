@@ -512,6 +512,7 @@ async function syncServerQueue() {
     document.getElementById('shuffle-btn').classList.toggle('active', shuffleEnabled);
     document.getElementById('progress-track').classList.toggle('seekable', Boolean(serverQueue.seekable));
     renderNowPlaying(lastKnownQueueTitle);
+    updateCookingIndicator();
   } catch (err) {
     // Non-fatal: local currentTrackInfo still covers this tab's own plays.
   }
@@ -641,7 +642,6 @@ async function playQueueItem(items, index, triggerBtn) {
   const titleEl = document.getElementById('now-title');
   titleEl.classList.add('loading');
   titleEl.textContent = 'Loading...';
-  document.getElementById('disc').classList.add('loading');
 
   try {
     const res = await fetch('backend.php', {
@@ -678,7 +678,11 @@ async function playQueueItem(items, index, triggerBtn) {
     showError('Play request failed');
     renderNowPlaying();
   } finally {
-    document.getElementById('disc').classList.remove('loading');
+    // Reflects "cooking" status from OwnTone's own confirmation rather
+    // than clearing it just because this HTTP round-trip finished — the
+    // pipeline can still be spinning up in the background well after the
+    // play request itself returns "ok".
+    updateCookingIndicator();
     if (triggerBtn) {
       triggerBtn.disabled = false;
       triggerBtn.textContent = 'Play';
@@ -694,6 +698,7 @@ async function stopPlayback() {
   currentTrackInfo = { title: null, thumbnail: null, channel: null, webpageUrl: null };
   serverQueue = { items: [], current_index: -1, shuffle: shuffleEnabled };
   renderNowPlaying();
+  updateCookingIndicator();
 
   try {
     await fetch('backend.php', {
@@ -710,8 +715,43 @@ async function stopPlayback() {
 
 let lastKnownIsPlaying = false;
 
+// Tracks whether OwnTone's CURRENT item (by its own numeric item id) has
+// ever actually been confirmed producing audio, so the "cooking" spinner
+// can be item-specific rather than trusting stale data. Duration alone
+// doesn't work for this: OwnTone keeps reporting the PREVIOUS track's
+// item_length_ms until the new pipe's metadata write lands, so right
+// after a queue swap it can show a real-looking-but-wrong nonzero
+// duration for the new item — confirmed live (a 19s video briefly showed
+// the prior track's ~4min duration). isPlaying or real progress (> 0) for
+// the CURRENT item id is what actually means "this item has audio flowing
+// right now or has before" — reached at least once means no longer cooking,
+// so a later legitimate pause of an already-loaded track doesn't re-trigger it.
+let lastSeenItemId = null;
+let hasConfirmedPlaybackForItemId = false;
+
+// Shows the thumbnail spinner while a track is queued but OwnTone hasn't
+// actually confirmed it's playing yet — the "cooking" window between
+// launching the yt-dlp/ffmpeg pipeline into the fifo and OwnTone's own
+// state catching up (which can take a while: oEmbed + yt-dlp's duration
+// lookup have been observed taking 15-20s on this host). Driven by
+// OwnTone's own confirmed state (not this tab's local optimism) so it's
+// correct whether the play was started by this tab, another tab, or the
+// daemon, and correct across a reload mid-preparation.
+function updateCookingIndicator() {
+  const isCooking = Boolean(currentQueueItem()) && !hasConfirmedPlaybackForItemId;
+  document.getElementById('disc').classList.toggle('loading', isCooking);
+}
+
 function applyPlayerState(player, queue) {
   lastKnownIsPlaying = player.isPlaying;
+
+  if (player.currentItemId !== lastSeenItemId) {
+    lastSeenItemId = player.currentItemId;
+    hasConfirmedPlaybackForItemId = false;
+  }
+  if (player.isPlaying || player.progressSeconds > 0) {
+    hasConfirmedPlaybackForItemId = true;
+  }
 
   document.getElementById('play-pause-btn').innerHTML = player.isPlaying ? ICONS.pause : ICONS.play;
   document.getElementById('disc').classList.toggle('spinning', player.isPlaying);
@@ -722,6 +762,7 @@ function applyPlayerState(player, queue) {
 
   lastKnownQueueTitle = queue.title;
   renderNowPlaying(queue.title);
+  updateCookingIndicator();
 
   // player.volume is null when OwnTone reported a garbage value (see
   // sanitizeVolume) — leave the slider/label showing the last known-good

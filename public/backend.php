@@ -26,6 +26,13 @@ define('QUEUE_STATE_FILE', '/mnt/appsrv/ytb-owntone/data/queue_state.json');
 // Holds at most one pre-downloaded "next track" audio file at a time (see
 // maybe_preload_next) — outside the web root like the other data paths.
 define('AUDIO_CACHE_DIR', '/mnt/appsrv/ytb-owntone/cache');
+// Serializes pipeline start/stop across CONCURRENT PHP-FPM worker
+// processes (one per in-flight HTTP request) — a plain in-PHP wait loop
+// only serializes within a single request, so rapid clicks (each its own
+// separate request/process) could still race each other's pkill/launch
+// and pile up multiple yt-dlp+ffmpeg pairs, which is exactly what
+// exhausted memory and froze the host even after that wait loop was added.
+define('PLAYBACK_LOCK_FILE', '/mnt/appsrv/ytb-owntone/data/playback.lock');
 
 function is_youtube_url(string $url): bool
 {
@@ -550,6 +557,52 @@ function ensure_metadata_pipe_exists(string $metadataFifoPath): void
 // piled up enough concurrent processes to exhaust memory and freeze the
 // host once already (confirmed via dmesg: 4-5 simultaneous yt-dlp
 // processes plus ffmpeg at the time of that freeze).
+//
+// That wait loop alone wasn't enough, though: it only serializes within
+// ONE request. Rapid Play clicks each arrive as a SEPARATE HTTP request,
+// handled by a SEPARATE PHP-FPM worker process with no shared in-PHP
+// state — so several of those waits could still run concurrently and
+// race each other's stop-then-launch sequence, piling up processes again
+// (confirmed: froze a second time even with the wait loop in place).
+// flock() on a shared lock file is a real cross-process mutex, unlike an
+// in-memory wait. Waits up to 25s for the lock (not indefinitely, so a
+// genuinely stuck holder still fails fast rather than piling up blocked
+// PHP-FPM workers) — a single play can legitimately take upwards of 15-20s
+// on this host (oEmbed + yt-dlp duration lookup over a slow network path),
+// confirmed live, so a shorter timeout made ordinary near-simultaneous
+// clicks fail with "busy" far more often than intended.
+function with_playback_lock(callable $fn): array
+{
+    $lockFile = @fopen(PLAYBACK_LOCK_FILE, 'c');
+    if ($lockFile === false) {
+        // Can't even open the lock file — degrade gracefully rather than
+        // hard-fail every play/stop/seek over what's likely a one-off
+        // permissions/disk issue unrelated to the actual playback request.
+        return $fn();
+    }
+
+    $locked = false;
+    $deadline = microtime(true) + 25;
+    while (!($locked = flock($lockFile, LOCK_EX | LOCK_NB))) {
+        if (microtime(true) >= $deadline) {
+            break;
+        }
+        usleep(100000);
+    }
+
+    if (!$locked) {
+        fclose($lockFile);
+        return ['status' => 'error', 'message' => 'another play/stop/seek request is already in progress — try again'];
+    }
+
+    try {
+        return $fn();
+    } finally {
+        flock($lockFile, LOCK_UN);
+        fclose($lockFile);
+    }
+}
+
 function stop_existing_pipeline(): void
 {
     shell_exec('pkill -f yt-dlp 2>/dev/null');
@@ -592,50 +645,52 @@ function play_url(string $url, int $startAtSeconds = 0): array
         return ['status' => 'error', 'message' => 'seek not ready yet — track is not fully cached'];
     }
 
-    stop_existing_pipeline();
+    return with_playback_lock(function () use ($url, $startAtSeconds, $cachedAudioPath) {
+        stop_existing_pipeline();
 
-    $tracks = owntone_get('/api/library/files?directory=' . rawurlencode(OWNTONE_PIPE_DIRECTORY));
-    $trackId = extract_track_id_from_tracks_json($tracks, YOUTUBE_FIFO_MATCH);
+        $tracks = owntone_get('/api/library/files?directory=' . rawurlencode(OWNTONE_PIPE_DIRECTORY));
+        $trackId = extract_track_id_from_tracks_json($tracks, YOUTUBE_FIFO_MATCH);
 
-    if ($trackId === null) {
-        return ['status' => 'error', 'message' => 'pipe track not found in OwnTone library'];
-    }
+        if ($trackId === null) {
+            return ['status' => 'error', 'message' => 'pipe track not found in OwnTone library'];
+        }
 
-    $oembed = fetch_youtube_oembed($url);
-    $title = $oembed['title'] ?? '';
-    $channel = $oembed['author_name'] ?? '';
-    $thumbnailUrl = $oembed['thumbnail_url'] ?? '';
-    $durationSeconds = (int) round((float) trim((string) shell_exec(build_yt_dlp_duration_cmd($url))));
-    $artworkBytes = $thumbnailUrl !== '' ? fetch_url_bytes($thumbnailUrl) : '';
+        $oembed = fetch_youtube_oembed($url);
+        $title = $oembed['title'] ?? '';
+        $channel = $oembed['author_name'] ?? '';
+        $thumbnailUrl = $oembed['thumbnail_url'] ?? '';
+        $durationSeconds = (int) round((float) trim((string) shell_exec(build_yt_dlp_duration_cmd($url))));
+        $artworkBytes = $thumbnailUrl !== '' ? fetch_url_bytes($thumbnailUrl) : '';
 
-    // Queue + start playback BEFORE launching the pipeline, so the new
-    // queue item already exists by the time metadata arrives on the pipe.
-    // OwnTone applies incoming metadata to whatever item is currently
-    // active — if that call happens after the metadata write (as it did
-    // when the frontend made this call separately, later), the metadata
-    // lands on the stale previous item instead of this one.
-    owntone_post('/api/queue/items/add?uris=library:track:' . $trackId . '&clear=true&playback=start');
+        // Queue + start playback BEFORE launching the pipeline, so the new
+        // queue item already exists by the time metadata arrives on the pipe.
+        // OwnTone applies incoming metadata to whatever item is currently
+        // active — if that call happens after the metadata write (as it did
+        // when the frontend made this call separately, later), the metadata
+        // lands on the stale previous item instead of this one.
+        owntone_post('/api/queue/items/add?uris=library:track:' . $trackId . '&clear=true&playback=start');
 
-    $metadataFifoPath = YOUTUBE_FIFO_PATH . '.metadata';
-    ensure_metadata_pipe_exists($metadataFifoPath);
-    $metadataXml = build_pipe_metadata_xml($title, $channel, $durationSeconds, $artworkBytes, $startAtSeconds);
+        $metadataFifoPath = YOUTUBE_FIFO_PATH . '.metadata';
+        ensure_metadata_pipe_exists($metadataFifoPath);
+        $metadataXml = build_pipe_metadata_xml($title, $channel, $durationSeconds, $artworkBytes, $startAtSeconds);
 
-    shell_exec(build_play_pipeline_cmd($url, YOUTUBE_FIFO_PATH, $metadataFifoPath, $metadataXml, $cachedAudioPath, $startAtSeconds));
+        shell_exec(build_play_pipeline_cmd($url, YOUTUBE_FIFO_PATH, $metadataFifoPath, $metadataXml, $cachedAudioPath, $startAtSeconds));
 
-    // Not cached yet (fresh live-streamed play): fetch a full copy in the
-    // background so this track becomes seekable a little while into
-    // playback, without delaying the start of playback itself.
-    if ($cachedAudioPath === null) {
-        ensure_current_track_cached($url);
-    }
+        // Not cached yet (fresh live-streamed play): fetch a full copy in the
+        // background so this track becomes seekable a little while into
+        // playback, without delaying the start of playback itself.
+        if ($cachedAudioPath === null) {
+            ensure_current_track_cached($url);
+        }
 
-    return [
-        'status' => 'ok',
-        'track_id' => $trackId,
-        'title' => $title ?: null,
-        'thumbnail' => $thumbnailUrl ?: null,
-        'channel' => $channel ?: null,
-    ];
+        return [
+            'status' => 'ok',
+            'track_id' => $trackId,
+            'title' => $title ?: null,
+            'thumbnail' => $thumbnailUrl ?: null,
+            'channel' => $channel ?: null,
+        ];
+    });
 }
 
 function handle_play(string $url): void
@@ -742,10 +797,13 @@ function handle_play_queue(array $items, int $index, bool $shuffle): void
 // QUEUE_STATE_FILE independently of OwnTone's own playback state.
 function handle_stop(): void
 {
-    stop_existing_pipeline();
-    owntone_put('/api/player/stop');
-    save_queue_state([], -1, false);
-    echo json_encode(['status' => 'ok']);
+    $result = with_playback_lock(function () {
+        stop_existing_pipeline();
+        owntone_put('/api/player/stop');
+        save_queue_state([], -1, false);
+        return ['status' => 'ok'];
+    });
+    echo json_encode($result);
 }
 
 function handle_set_shuffle(bool $shuffle): void

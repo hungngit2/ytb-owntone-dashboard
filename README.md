@@ -235,15 +235,21 @@ something and the host became unresponsive over SSH — while the kernel
 itself stayed alive (it was already running its own thread to keep the
 hardware watchdog petted, so the hardware timer never fired to help).
 
-Two layers now guard against this:
+Three layers now guard against this:
 
-1. **`stop_existing_pipeline()` in `backend.php`** signals the existing
-   yt-dlp/ffmpeg pipeline and *waits* (up to 2s, escalating to `SIGKILL`)
-   for it to actually exit before starting a new one — instead of firing
-   `pkill` and immediately launching a new pipeline regardless. This is
-   what stops back-to-back play/stop/seek requests (rapid Next/Prev, or
-   anything issuing several plays in quick succession) from stacking up
-   multiple concurrent processes.
+1. **`with_playback_lock()` in `backend.php`** wraps the entire
+   stop-existing-then-launch-new sequence (in `play_url`/`handle_stop`) in
+   a `flock()` on `PLAYBACK_LOCK_FILE` — a real cross-process mutex.
+   `stop_existing_pipeline()` alone (signal + wait up to 2s, escalating to
+   `SIGKILL`, for the old process to actually exit) only serializes
+   *within one PHP request*; rapid Play clicks each arrive as a *separate*
+   PHP-FPM worker process with no shared state, so they could still race
+   each other's stop-then-launch and stack up processes — confirmed live,
+   it froze a second time even with the wait-loop in place. The lock
+   itself waits up to 25s (a single play can legitimately take 15-20s on
+   this host: oEmbed + yt-dlp's duration lookup over a slow network path)
+   before giving up and returning a "try again" error, rather than
+   blocking a PHP-FPM worker indefinitely.
 2. **The `watchdog` package** (`apt install watchdog`) takes over
    `/dev/watchdog` from the kernel's own auto-pet thread, so a genuine
    full hang now triggers a real hardware reset. It's also configured
@@ -255,6 +261,12 @@ Two layers now guard against this:
    `wdctl /dev/watchdog` (the latter will report "cannot read" if the
    daemon already holds the device — that's expected, not a failure;
    confirm ownership instead with `fuser /dev/watchdog`).
+3. **The thumbnail shows a loading spinner while a track is "cooking"**
+   (queued but not yet confirmed producing audio) — see `updateCookingIndicator`
+   in `app.js`. This isn't primarily a resilience mechanism, but it exists
+   because of the same discovery: plays can take much longer to actually
+   start than the UI previously implied, so the app needs to show that
+   honestly instead of looking broken or idle in the meantime.
 
 ## Tests
 
