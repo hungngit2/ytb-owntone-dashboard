@@ -239,6 +239,16 @@ function owntone_get(string $path): array
     return is_array($decoded) ? $decoded : [];
 }
 
+function owntone_post(string $path): void
+{
+    $ch = curl_init(OWNTONE_BASE . $path);
+    curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'POST');
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+    curl_exec($ch);
+    curl_close($ch);
+}
+
 function fetch_youtube_oembed(string $url): array
 {
     $ch = curl_init('https://www.youtube.com/oembed?url=' . rawurlencode($url) . '&format=json');
@@ -291,17 +301,6 @@ function handle_play(string $url): void
     shell_exec('pkill -f yt-dlp 2>/dev/null');
     shell_exec('pkill -f ffmpeg 2>/dev/null');
 
-    $oembed = fetch_youtube_oembed($url);
-    $title = $oembed['title'] ?? '';
-    $channel = $oembed['author_name'] ?? '';
-    $durationSeconds = (int) round((float) trim((string) shell_exec(build_yt_dlp_duration_cmd($url))));
-
-    $metadataFifoPath = YOUTUBE_FIFO_PATH . '.metadata';
-    ensure_metadata_pipe_exists($metadataFifoPath);
-    $metadataXml = build_pipe_metadata_xml($title, $channel, $durationSeconds);
-
-    shell_exec(build_play_pipeline_cmd($url, YOUTUBE_FIFO_PATH, $metadataFifoPath, $metadataXml));
-
     $tracks = owntone_get('/api/library/files?directory=' . rawurlencode(OWNTONE_PIPE_DIRECTORY));
     $trackId = extract_track_id_from_tracks_json($tracks, YOUTUBE_FIFO_MATCH);
 
@@ -310,6 +309,25 @@ function handle_play(string $url): void
         echo json_encode(['status' => 'error', 'message' => 'pipe track not found in OwnTone library']);
         return;
     }
+
+    $oembed = fetch_youtube_oembed($url);
+    $title = $oembed['title'] ?? '';
+    $channel = $oembed['author_name'] ?? '';
+    $durationSeconds = (int) round((float) trim((string) shell_exec(build_yt_dlp_duration_cmd($url))));
+
+    // Queue + start playback BEFORE launching the pipeline, so the new
+    // queue item already exists by the time metadata arrives on the pipe.
+    // OwnTone applies incoming metadata to whatever item is currently
+    // active — if that call happens after the metadata write (as it did
+    // when the frontend made this call separately, later), the metadata
+    // lands on the stale previous item instead of this one.
+    owntone_post('/api/queue/items/add?uris=library:track:' . $trackId . '&clear=true&playback=start');
+
+    $metadataFifoPath = YOUTUBE_FIFO_PATH . '.metadata';
+    ensure_metadata_pipe_exists($metadataFifoPath);
+    $metadataXml = build_pipe_metadata_xml($title, $channel, $durationSeconds);
+
+    shell_exec(build_play_pipeline_cmd($url, YOUTUBE_FIFO_PATH, $metadataFifoPath, $metadataXml));
 
     echo json_encode([
         'status' => 'ok',

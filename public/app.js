@@ -318,14 +318,6 @@ async function playFromBackend(youtubeUrl, triggerBtn) {
     currentTrackInfo = { title: data.title || null, thumbnail: data.thumbnail || null, channel: data.channel || null };
     renderNowPlaying();
     document.getElementById('search-input').value = '';
-
-    const queueRes = await fetch(
-      `${owntoneBase()}/api/queue/items/add?uris=library:track:${data.track_id}&clear=true&playback=start`,
-      { method: 'POST' }
-    );
-    if (!queueRes.ok) {
-      showError('Failed to queue track in OwnTone');
-    }
   } catch (err) {
     titleEl.classList.remove('loading');
     showError('Play request failed');
