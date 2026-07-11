@@ -182,12 +182,10 @@ redeploy elsewhere:
   normal use — confirmed multiple times, requiring a physical power-cycle.
   Search now runs entirely in the browser against the YouTube Data API.
   Don't reintroduce a server-side search path without a very good reason.
-- **No seeking on pipe-based playback.** OwnTone can't seek within a named
-  pipe source — there's no file to seek into, just a live stream PHP is
-  writing in real time — so the progress bar is display-only by design,
-  not a missing feature. If real seeking is ever wanted, it would require
-  a fundamentally different approach (e.g. downloading to a real file
-  OwnTone can seek within, rather than piping live).
+- **Seeking only works once a track is fully cached.** OwnTone can't seek
+  within a live pipe stream — only a real file on disk is seekable. See
+  "Preloading the next track" below for how the progress bar becomes
+  draggable once the background download finishes.
 - **"Finished" detection needs slack, not an exact match.** The queue
   daemon decides a track ended when OwnTone reports paused *and* progress
   is within 4s of the reported duration — not 1s. The duration we send is
@@ -203,17 +201,60 @@ redeploy elsewhere:
 
 ### Preloading the next track
 
-While a track plays, the backend pre-downloads the *next sequential* item
-(via `maybe_preload_next` in `backend.php`) into `AUDIO_CACHE_DIR`, keyed
-by video id. When that track's turn comes, `play_url` skips yt-dlp
-entirely and streams from the cached file instead (`cat file | ffmpeg -re`)
-— removing yt-dlp's resolve+download latency from the critical path of
-pressing Next or auto-advancing. Only one file is ever cached at a time; a
-stray/abandoned preload is cleared out (but never the file the currently-
-playing pipeline might have just started reading) the next time a new
-preload kicks off. Shuffle mode has no fixed "next" to preload, so it's
-skipped there — the daemon only picks the random next track once the
-current one actually finishes.
+While a track plays, the backend also pre-downloads a full copy of the
+*current* track and the *next sequential* item (via
+`ensure_current_track_cached`/`maybe_preload_next` in `backend.php`) into
+`AUDIO_CACHE_DIR`, keyed by video id. Once cached:
+
+- Playing that track skips yt-dlp entirely and has `ffmpeg` read the file
+  directly (`ffmpeg -re -i <file>`) — removing yt-dlp's resolve+download
+  latency from the critical path of pressing Next or auto-advancing.
+- `action=queue_state` reports `seekable: true` and the progress bar
+  becomes draggable; `action=seek` restarts the pipe with `ffmpeg -ss` to
+  jump to that position (only a real file can be seeked, not a live
+  yt-dlp stream), reporting the seek target in the `prgr` metadata so
+  OwnTone's own position display stays consistent across the restart.
+
+Cache files persist (not deleted after one use) so repeat seeks don't
+re-download — cleanup happens by only ever keeping the current + next
+track's files and clearing anything else the next time a preload kicks
+off. Shuffle mode has no fixed "next" to preload, so it's skipped there —
+the daemon only picks the random next track once the current one actually
+finishes.
+
+## Resilience
+
+### Auto-recovery from a frozen host
+
+This is a resource-constrained ARM board (4 cores / ~971MB RAM) and it
+has genuinely frozen before under heavy `yt-dlp`/`ffmpeg` load, requiring
+a physical power-cycle. Root cause (confirmed via `dmesg`): several
+concurrent `yt-dlp`+`ffmpeg` processes piled up faster than a previous
+one could be signaled to exit, exhausting memory until the kernel OOM-killed
+something and the host became unresponsive over SSH — while the kernel
+itself stayed alive (it was already running its own thread to keep the
+hardware watchdog petted, so the hardware timer never fired to help).
+
+Two layers now guard against this:
+
+1. **`stop_existing_pipeline()` in `backend.php`** signals the existing
+   yt-dlp/ffmpeg pipeline and *waits* (up to 2s, escalating to `SIGKILL`)
+   for it to actually exit before starting a new one — instead of firing
+   `pkill` and immediately launching a new pipeline regardless. This is
+   what stops back-to-back play/stop/seek requests (rapid Next/Prev, or
+   anything issuing several plays in quick succession) from stacking up
+   multiple concurrent processes.
+2. **The `watchdog` package** (`apt install watchdog`) takes over
+   `/dev/watchdog` from the kernel's own auto-pet thread, so a genuine
+   full hang now triggers a real hardware reset. It's also configured
+   with load-average thresholds (`max-load-1 = 24`, `max-load-5 = 20` in
+   `/etc/watchdog.conf` — well above the ~6 load average seen during the
+   last freeze, so ordinary heavy use never trips it) to proactively
+   reboot if the host is clearly thrashing rather than just transiently
+   busy. Verify it's active with `systemctl status watchdog.service` and
+   `wdctl /dev/watchdog` (the latter will report "cannot read" if the
+   daemon already holds the device — that's expected, not a failure;
+   confirm ownership instead with `fuser /dev/watchdog`).
 
 ## Tests
 

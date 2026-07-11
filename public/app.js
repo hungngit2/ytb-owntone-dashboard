@@ -493,6 +493,13 @@ let currentTrackInfo = { title: null, thumbnail: null, channel: null, webpageUrl
 // highlight/prev/next correct in both cases.
 let serverQueue = { items: [], current_index: -1, shuffle: false };
 
+// renderNowPlaying's own OwnTone-reported title, cached so syncServerQueue
+// can re-render once serverQueue actually arrives (it resolves after
+// applyPlayerState's own renderNowPlaying call, which ran against a still-
+// empty/stale serverQueue) — without this, a page load could get stuck
+// showing "Nothing playing" until the next unrelated websocket event.
+let lastKnownQueueTitle = '';
+
 async function syncServerQueue() {
   try {
     const res = await fetch('backend.php', {
@@ -503,8 +510,8 @@ async function syncServerQueue() {
     serverQueue = await res.json();
     shuffleEnabled = Boolean(serverQueue.shuffle);
     document.getElementById('shuffle-btn').classList.toggle('active', shuffleEnabled);
-    updatePlayingHighlight();
     document.getElementById('progress-track').classList.toggle('seekable', Boolean(serverQueue.seekable));
+    renderNowPlaying(lastKnownQueueTitle);
   } catch (err) {
     // Non-fatal: local currentTrackInfo still covers this tab's own plays.
   }
@@ -518,24 +525,51 @@ function isRawFifoFilename(title) {
   return /\.fifo$/i.test(title || '');
 }
 
+// The queue item persisted server-side (queue_state.json, mirrored into
+// serverQueue) for "what's currently playing" — available immediately
+// after a page reload, unlike currentTrackInfo (only set by this tab's
+// own play calls) or OwnTone's own queue title (lags until its pipe
+// reader actually receives our metadata write). Without this, a reload
+// during that gap showed a misleading "Nothing playing" for something
+// that was, in fact, already in progress.
+function currentQueueItem() {
+  return serverQueue.items[serverQueue.current_index] || null;
+}
+
 function renderNowPlaying(fallbackTitle) {
   const titleEl = document.getElementById('now-title');
   titleEl.classList.remove('loading');
-  const displayFallback = isRawFifoFilename(fallbackTitle) ? '' : fallbackTitle;
-  titleEl.textContent = currentTrackInfo.title || displayFallback || 'Nothing playing';
+  const queueItem = currentQueueItem();
 
-  document.getElementById('now-subtitle').textContent = currentTrackInfo.channel || '';
+  // Priority: this tab's own freshly-resolved info (set immediately after
+  // this tab's own play call) > the persisted queue item (queue_state.json,
+  // mirrored into serverQueue — reflects what SHOULD be current right
+  // away, before OwnTone necessarily has) > OwnTone's own reported title,
+  // used only as an absolute last resort. OwnTone's title is deliberately
+  // ranked below queueItem: right after a new play request it can still
+  // show the *previous* track (or the raw fifo filename) for a beat,
+  // until its pipe reader processes our metadata write — trusting it over
+  // our own queue item caused a stale/mismatched title+channel pairing to
+  // flash on reload (the exact bug this function exists to avoid).
+  const ownToneReportedTitle = !isRawFifoFilename(fallbackTitle) ? fallbackTitle : '';
+
+  titleEl.textContent = currentTrackInfo.title || (queueItem && queueItem.title) || ownToneReportedTitle || 'Nothing playing';
+
+  document.getElementById('now-subtitle').textContent =
+    currentTrackInfo.channel || (queueItem && queueItem.channel) || '';
 
   const thumbEl = document.getElementById('disc-thumb');
   const heroBgImg = document.getElementById('hero-bg-img');
 
-  // After a page refresh, currentTrackInfo is empty (it only ever gets set
-  // by a play action in this session) even though OwnTone may still be
-  // playing something. Fall back to OwnTone's own artwork endpoint, which
-  // is populated by the PICT metadata we send on play — but only when a
-  // real queue item exists (fallbackTitle set), and only if that image
-  // actually loads (OwnTone returns a 404 if no artwork was ever sent).
-  const thumbnailUrl = currentTrackInfo.thumbnail || (fallbackTitle ? `${owntoneBase()}/artwork/nowplaying` : '');
+  // Same priority as the title: this tab's own thumbnail, then the
+  // persisted queue item's thumbnail, then OwnTone's own artwork endpoint
+  // — only tried when we have no queue item at all to fall back on
+  // (OwnTone 404s it if no artwork was ever sent, and it can't be trusted
+  // to correspond to the current item for the same reason as the title above).
+  const thumbnailUrl =
+    currentTrackInfo.thumbnail ||
+    (queueItem && queueItem.thumbnail) ||
+    (!queueItem && ownToneReportedTitle ? `${owntoneBase()}/artwork/nowplaying` : '');
 
   if (thumbnailUrl) {
     thumbEl.onerror = () => thumbEl.classList.remove('visible');
@@ -686,6 +720,7 @@ function applyPlayerState(player, queue) {
   badgeEl.textContent = player.isPlaying ? 'PLAYING' : 'IDLE';
   badgeEl.classList.toggle('playing', player.isPlaying);
 
+  lastKnownQueueTitle = queue.title;
   renderNowPlaying(queue.title);
 
   // player.volume is null when OwnTone reported a garbage value (see

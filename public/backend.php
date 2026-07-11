@@ -541,6 +541,40 @@ function ensure_metadata_pipe_exists(string $metadataFifoPath): void
     ));
 }
 
+// Signals the current pipeline to stop AND waits (briefly) for it to
+// actually exit before returning, escalating to SIGKILL if it hasn't by
+// the deadline. Without this wait, back-to-back play requests arriving
+// faster than a signaled process can unwind (e.g. rapid Next/Prev, or
+// several requests firing in quick succession) can each launch a new
+// yt-dlp+ffmpeg pair on top of ones still dying — this is exactly what
+// piled up enough concurrent processes to exhaust memory and freeze the
+// host once already (confirmed via dmesg: 4-5 simultaneous yt-dlp
+// processes plus ffmpeg at the time of that freeze).
+function stop_existing_pipeline(): void
+{
+    shell_exec('pkill -f yt-dlp 2>/dev/null');
+    shell_exec('pkill -f ffmpeg 2>/dev/null');
+    // Catches any metadata writer stuck from a prior play attempt before
+    // the timeout guard existed (or before it elapses) — matched on the
+    // fifo path itself, not a generic name, so it can't catch anything
+    // unrelated to this app.
+    shell_exec('pkill -f ' . escapeshellarg(YOUTUBE_FIFO_PATH . '.metadata') . ' 2>/dev/null');
+
+    for ($i = 0; $i < 10; $i++) {
+        $stillRunning = trim((string) shell_exec('pgrep -f "yt-dlp|ffmpeg" 2>/dev/null'));
+        if ($stillRunning === '') {
+            return;
+        }
+        usleep(200000);
+    }
+
+    // Still alive after 2s of grace — force it rather than let a stuck
+    // process linger indefinitely and stack up further with every
+    // subsequent play/stop/seek call.
+    shell_exec('pkill -9 -f yt-dlp 2>/dev/null');
+    shell_exec('pkill -9 -f ffmpeg 2>/dev/null');
+}
+
 function play_url(string $url, int $startAtSeconds = 0): array
 {
     if (!is_youtube_url($url)) {
@@ -558,13 +592,7 @@ function play_url(string $url, int $startAtSeconds = 0): array
         return ['status' => 'error', 'message' => 'seek not ready yet — track is not fully cached'];
     }
 
-    shell_exec('pkill -f yt-dlp 2>/dev/null');
-    shell_exec('pkill -f ffmpeg 2>/dev/null');
-    // Catches any metadata writer stuck from a prior play attempt before
-    // the timeout guard existed (or before it elapses) — matched on the
-    // fifo path itself, not a generic name, so it can't catch anything
-    // unrelated to this app.
-    shell_exec('pkill -f ' . escapeshellarg(YOUTUBE_FIFO_PATH . '.metadata') . ' 2>/dev/null');
+    stop_existing_pipeline();
 
     $tracks = owntone_get('/api/library/files?directory=' . rawurlencode(OWNTONE_PIPE_DIRECTORY));
     $trackId = extract_track_id_from_tracks_json($tracks, YOUTUBE_FIFO_MATCH);
@@ -714,9 +742,7 @@ function handle_play_queue(array $items, int $index, bool $shuffle): void
 // QUEUE_STATE_FILE independently of OwnTone's own playback state.
 function handle_stop(): void
 {
-    shell_exec('pkill -f yt-dlp 2>/dev/null');
-    shell_exec('pkill -f ffmpeg 2>/dev/null');
-    shell_exec('pkill -f ' . escapeshellarg(YOUTUBE_FIFO_PATH . '.metadata') . ' 2>/dev/null');
+    stop_existing_pipeline();
     owntone_put('/api/player/stop');
     save_queue_state([], -1, false);
     echo json_encode(['status' => 'ok']);
