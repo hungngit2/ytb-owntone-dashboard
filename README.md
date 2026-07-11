@@ -2,70 +2,104 @@
 
 A dark-mode, single-page PHP + vanilla JS dashboard for a home server running
 [OwnTone](https://github.com/owntone/owntone-server). Search or paste a
-YouTube URL, and it plays through OwnTone by piping audio into a named pipe.
+YouTube URL, save songs into named playlists, and play through OwnTone by
+piping audio into a named pipe.
 
 ## How it works
 
 - Type a search term or paste a YouTube URL into the single input box.
-  - A YouTube URL resolves its title/thumbnail/channel and shows it as a
-    single result card — it doesn't auto-play.
-  - Plain text triggers a `yt-dlp` search (30 results, one scrollable list).
-- Clicking Play kills any in-flight stream, then launches a detached
-  `yt-dlp | ffmpeg -re` pipeline that writes WAV audio into OwnTone's named
-  pipe at real playback speed (not a burst — OwnTone needs time to attach as
-  a live reader).
-- The backend resolves the pipe's current OwnTone track id and tells OwnTone
-  (via its REST API) to clear the queue, add that track, and start playback.
-- The UI stays in sync with OwnTone over its WebSocket API — no polling.
-- A "Playlist" tab lets you save/remove search results; both the playlist
-  and the last search are cached server-side so a page refresh or a
-  different browser sees the same thing.
+  - A YouTube URL resolves its title/thumbnail/channel (via YouTube's
+    oEmbed endpoint) and shows it as a single result card — it doesn't
+    auto-play.
+  - Plain text searches YouTube's official **Data API v3 directly from the
+    browser** (30 results). This runs entirely client-side — the backend is
+    never involved in search, so it can't load the server.
+- Clicking Play kills any in-flight stream, tells OwnTone to queue and start
+  that track, then launches a detached `yt-dlp | ffmpeg -re` pipeline that
+  writes WAV audio into OwnTone's named pipe at real playback speed (not a
+  burst — OwnTone needs time to attach as a live reader). A second pipe
+  carries real title/artist/duration/artwork metadata to OwnTone itself
+  (shairport-sync's pipe metadata protocol), so OwnTone's own "now playing"
+  shows more than the generic pipe filename.
+- The UI stays in sync with OwnTone over its WebSocket API for play/pause/
+  volume state, with a local 1-second ticker interpolating the progress bar
+  between syncs (OwnTone's WebSocket only pushes on state changes, not a
+  per-second heartbeat).
+- A "Playlist" tab supports multiple **named** playlists: create one, add
+  search results to an existing or new one, remove items, and "Play All"
+  (which starts the first item; Prev/Next then step through it).
+- The last search and all playlists are cached server-side (as JSON files)
+  so a page refresh or a different browser sees the same thing.
 
 ## Requirements
 
 - PHP (via Apache/Nginx + php-fpm)
-- `yt-dlp`, `ffmpeg`, `jq` on `PATH` for the PHP process user
+- `yt-dlp` and `ffmpeg` on `PATH` for the **PHP-FPM process user**
+  specifically (not just your login shell) — used only for playback
+  (download + transcode + duration lookup), never for search
 - A running OwnTone server on the same host, reachable at `127.0.0.1:3689`
-- An OwnTone library pipe source already configured, e.g.
-  `/opt/docker/owntone/pipes/youtube.fifo`
+- An OwnTone library pipe source already configured (see Setup below)
+- A free **YouTube Data API v3** key (see Setup) — required for search to
+  work at all, since search runs against Google's API, not `yt-dlp`
 
 ## Project layout
 
 ```
 public/   web root — point your vhost's DocumentRoot here
-  index.php     page shell
-  backend.php   search/play API (POST action=search|play)
-  app.js        vanilla JS: input handling, pagination, OwnTone sync
-  style.css     dark-mode layout
+  index.php            page shell
+  backend.php          play/playlist/cache API (POST action=...)
+  app.js               vanilla JS: search, playback, playlists, OwnTone sync
+  style.css            dark-mode layout
+  config.js            YouTube API key (gitignored — you create this)
+  config.example.js     ^ template for the above, committed
 tests/    PHP/Node unit tests for the pure/testable logic
 docs/     design spec and implementation plan
 ```
 
-Only `public/` needs to be web-reachable — point your Apache/Nginx
-vhost's `DocumentRoot` (or php-fpm pool root) at `public/`, not the repo
-root, so `tests/`, `docs/`, and `.git` are never served over HTTP.
+Only `public/` needs to be web-reachable — point your Apache/Nginx vhost's
+`DocumentRoot` (or php-fpm pool root) at `public/`, not the repo root, so
+`tests/`, `docs/`, and `.git` are never served over HTTP.
 
 ## Setup
 
-1. Set your web server's document root to `public/`.
-2. Confirm the constants at the top of `public/backend.php` match your
-   environment:
-   - `OWNTONE_BASE` — OwnTone's base URL (default `http://127.0.0.1:3689`)
-   - `YOUTUBE_FIFO_PATH` — host path to the named pipe (for writing audio)
-   - `OWNTONE_PIPE_DIRECTORY` — the same pipe's path as OwnTone itself sees
-     it (e.g. inside its container), used to look up the pipe's track id
-   - `YOUTUBE_FIFO_MATCH` — substring used to find the pipe's library track
-   - `PLAYLIST_FILE` / `LAST_SEARCH_FILE` — **must be an absolute path
-     outside your web server's document root.** If your document root
-     covers more than this app's own directory (e.g. a shared multi-app
-     root like `/var/www`), a path such as `__DIR__ . '/../data'` can land
-     right back inside it and become directly downloadable over HTTP —
-     verify with `curl http://<host>/<relative-path-to-file>` and confirm
-     it 404s.
-3. In OwnTone's config, add the pipe's directory to `directories` so it's
-   indexed as a library track, and add `<pipe>.metadata` if you want real
-   metadata (not implemented here — see the design doc).
-4. Open the site in a browser on the same LAN as the server.
+### 1. YouTube Data API key (required for search)
+
+1. Go to https://console.cloud.google.com/apis/library/youtube.googleapis.com
+   (create a free Google Cloud project if you don't have one) and click
+   **Enable**.
+2. **APIs & Services → Credentials → Create Credentials → API key**.
+3. Restrict the key (HTTP referrer or IP) — it's visible to anyone who
+   views the page source.
+4. Copy `public/config.example.js` to `public/config.js` and paste your key
+   into it. **Never commit `config.js`** — it's gitignored on purpose.
+
+### 2. Web server
+
+Set your document root to `public/`, and give `backend.php`'s location its
+own longer `fastcgi_read_timeout` — even without the old `yt-dlp` search
+path, `action=play` still does a duration lookup that can take 10-15s.
+
+### 3. `public/backend.php` constants
+
+| Constant | Meaning |
+| --- | --- |
+| `OWNTONE_BASE` | OwnTone's base URL (default `http://127.0.0.1:3689`) |
+| `YOUTUBE_FIFO_PATH` | Host path to the named pipe, for writing audio. **Must be a path the PHP-FPM user can both create files in and traverse every parent directory of** — see the permissions gotcha below. Currently `/mnt/appsrv/ytb-pipes/youtube.fifo` on the deployed host, deliberately *not* under the OwnTone docker-compose directory (see gotchas) |
+| `OWNTONE_PIPE_DIRECTORY` | The same pipe's path as **OwnTone itself** sees it (e.g. inside its container/docker volume mount) — used to look up the pipe's library track id via OwnTone's API. Distinct from `YOUTUBE_FIFO_PATH` since they can differ (host path vs. container path) |
+| `YOUTUBE_FIFO_MATCH` | Substring used to find the pipe's library track by path |
+| `PLAYLIST_FILE` / `LAST_SEARCH_FILE` | **Must be an absolute path outside your web server's document root.** If your document root covers more than this app's own directory (a shared multi-app root), a path like `__DIR__ . '/../data'` can land right back inside it and become directly downloadable over HTTP — verify with `curl http://<host>/<relative-path>` and confirm it 404s. Currently `/mnt/appsrv/ytb-data/*.json` on the deployed host |
+
+### 4. OwnTone configuration
+
+- Add the pipe's directory to OwnTone's `directories` config setting so
+  it's indexed as a library track (a fifo sitting on disk isn't enough —
+  it has to be inside a path OwnTone actually scans).
+- No separate `.metadata` pipe setup needed on your end — `backend.php`
+  creates `<YOUTUBE_FIFO_PATH>.metadata` itself on first play if missing.
+
+### 5. Open the site
+
+Open it in a browser on the same LAN as the server.
 
 ## Known host-specific gotchas
 
@@ -76,20 +110,27 @@ redeploy elsewhere:
   (returned by `GET /api/config`'s `websocket_port`), at the root path, and
   requires the `notify` subprotocol — `app.js` discovers this dynamically,
   it isn't hardcoded to port 3689.
-- **`yt-dlp`/`ffmpeg` must actually be installed** and on `PATH` for the
-  PHP-FPM user specifically (not just your login shell) — `ffmpeg -re` is
-  required so OwnTone has time to attach as a live pipe reader before the
-  whole file has already been written and closed.
-- **Search latency**: extracting full metadata for 30 videos can exceed a
-  reverse proxy's default timeout (nginx's default is 60s). Give
-  `backend.php`'s location block its own longer `fastcgi_read_timeout`.
-  Search also touches the CPU hard enough on low-power hardware to
-  temporarily starve other services (including SSH) — avoid triggering
-  concurrent searches.
-- **Directory traversal permissions**: a file can be `0777` and still be
-  unreadable/unwritable by the PHP process if *any parent directory* in the
-  path lacks execute/search permission for that user — check the whole
-  chain with `namei -l <path>`, not just the file itself.
+- **Directory traversal permissions can silently reset.** A file can be
+  `0777` and still be unreadable/unwritable by the PHP process if *any
+  parent directory* in the path lacks execute/search permission for that
+  user — check the whole chain with `namei -l <path>`, not just the file
+  itself. This was observed to happen (docker compose recreation reset a
+  parent directory's permissions), which is exactly why `YOUTUBE_FIFO_PATH`
+  now lives under a path owned directly by the web server user, with no
+  dependency on a Docker-managed directory's permissions.
+- **Named pipe writes block until a reader attaches.** The metadata pipe
+  write is wrapped in `timeout 5` for this reason — an unguarded write can
+  hang forever if OwnTone's reader doesn't reconnect in time, and repeated
+  play attempts would each leak another stuck process.
+- **`prgr` (progress) metadata**: OwnTone's parser rejects the whole
+  progress item if any of its three RTP-timestamp fields parses to exactly
+  zero — use `1` as a nonzero reference point for start/pos, not `0`.
+- **Search must never touch `yt-dlp`.** A previous version ran
+  `yt-dlp --dump-json` server-side for search (30 videos of full metadata
+  extraction per query) and this was heavy enough to freeze the host under
+  normal use — confirmed multiple times, requiring a physical power-cycle.
+  Search now runs entirely in the browser against the YouTube Data API.
+  Don't reintroduce a server-side search path without a very good reason.
 
 ## Tests
 
@@ -99,5 +140,5 @@ node tests/app_test.js
 ```
 
 Both exercise the pure/testable helper functions only — the shell/network
-integration paths require a live host and are covered by the manual
-verification checklist above.
+integration paths require a live host and are covered by manual
+verification against the real OwnTone instance.
