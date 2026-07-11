@@ -177,6 +177,12 @@ redeploy elsewhere:
   normal use — confirmed multiple times, requiring a physical power-cycle.
   Search now runs entirely in the browser against the YouTube Data API.
   Don't reintroduce a server-side search path without a very good reason.
+- **No seeking on pipe-based playback.** OwnTone can't seek within a named
+  pipe source — there's no file to seek into, just a live stream PHP is
+  writing in real time — so the progress bar is display-only by design,
+  not a missing feature. If real seeking is ever wanted, it would require
+  a fundamentally different approach (e.g. downloading to a real file
+  OwnTone can seek within, rather than piping live).
 - **"Finished" detection needs slack, not an exact match.** The queue
   daemon decides a track ended when OwnTone reports paused *and* progress
   is within 4s of the reported duration — not 1s. The duration we send is

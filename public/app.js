@@ -623,6 +623,28 @@ async function playQueueItem(items, index, triggerBtn) {
   }
 }
 
+// Stops playback and clears the server-side queue (not just an OwnTone
+// pause) so bin/queue-daemon.php has nothing left to auto-advance — a
+// plain pause would leave the queue state in place for the daemon to
+// resume/advance the moment it next polls.
+async function stopPlayback() {
+  currentTrackInfo = { title: null, thumbnail: null, channel: null, webpageUrl: null };
+  serverQueue = { items: [], current_index: -1, shuffle: shuffleEnabled };
+  renderNowPlaying();
+
+  try {
+    await fetch('backend.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'action=stop',
+    });
+  } catch (err) {
+    showError('Stop request failed');
+  }
+
+  refreshPlayerState();
+}
+
 let lastKnownIsPlaying = false;
 
 function applyPlayerState(player, queue) {
@@ -675,6 +697,10 @@ function startProgressTicker(isPlaying, progressSeconds, durationSeconds) {
   }, 1000);
 }
 
+// Display-only, deliberately not clickable/seekable: OwnTone can't seek
+// within a pipe source (there's no file to seek in, only a live stream
+// PHP is writing to it in real time) — the progress bar just reflects
+// position, dragging it wouldn't do anything.
 function updateProgressDisplay(progressSeconds, durationSeconds) {
   const pct = durationSeconds > 0 ? (progressSeconds / durationSeconds) * 100 : 0;
   document.getElementById('progress-fill').style.width = `${pct}%`;
@@ -792,6 +818,7 @@ if (typeof document !== 'undefined') {
 
   document.getElementById('prev-btn').addEventListener('click', () => playRelative(-1));
   document.getElementById('next-btn').addEventListener('click', () => playRelative(1));
+  document.getElementById('stop-btn').addEventListener('click', stopPlayback);
 
   document.getElementById('volume-slider').addEventListener('input', (event) => {
     document.getElementById('volume-value').textContent = `${event.target.value}%`;

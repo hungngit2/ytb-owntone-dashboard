@@ -453,8 +453,20 @@ function owntone_get(string $path): array
 
 function owntone_post(string $path): void
 {
+    owntone_request($path, 'POST');
+}
+
+// Player transport controls (play/pause/stop/next/previous) are PUT
+// endpoints in OwnTone's API, unlike queue mutation endpoints (POST).
+function owntone_put(string $path): void
+{
+    owntone_request($path, 'PUT');
+}
+
+function owntone_request(string $path, string $method): void
+{
     $ch = curl_init(OWNTONE_BASE . $path);
-    curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'POST');
+    curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_TIMEOUT, 5);
     curl_exec($ch);
@@ -628,6 +640,20 @@ function handle_play_queue(array $items, int $index, bool $shuffle): void
     echo json_encode($result);
 }
 
+// Stops playback and clears the persisted queue so bin/queue-daemon.php
+// has nothing left to auto-advance — a plain OwnTone pause wouldn't be
+// enough, since the daemon (and a manual Next/Prev) both act on
+// QUEUE_STATE_FILE independently of OwnTone's own playback state.
+function handle_stop(): void
+{
+    shell_exec('pkill -f yt-dlp 2>/dev/null');
+    shell_exec('pkill -f ffmpeg 2>/dev/null');
+    shell_exec('pkill -f ' . escapeshellarg(YOUTUBE_FIFO_PATH . '.metadata') . ' 2>/dev/null');
+    owntone_put('/api/player/stop');
+    save_queue_state([], -1, false);
+    echo json_encode(['status' => 'ok']);
+}
+
 function handle_set_shuffle(bool $shuffle): void
 {
     $state = load_queue_state();
@@ -676,6 +702,8 @@ if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
         );
     } elseif ($action === 'set_shuffle') {
         handle_set_shuffle((bool) ($_POST['shuffle'] ?? false));
+    } elseif ($action === 'stop') {
+        handle_stop();
     } elseif ($action === 'queue_state') {
         echo json_encode(load_queue_state());
     } elseif ($action === 'playlists_list') {
