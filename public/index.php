@@ -66,6 +66,7 @@
     </div>
   </main>
 
+  <script src="config.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

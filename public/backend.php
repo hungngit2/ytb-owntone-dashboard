@@ -26,15 +26,6 @@ function is_youtube_url(string $url): bool
     );
 }
 
-function build_yt_dlp_search_cmd(string $query): string
-{
-    $searchTerm = 'ytsearch30:' . $query;
-    return sprintf(
-        'yt-dlp --dump-json %s 2>/dev/null | jq -s \'[.[] | {title: .title, webpage_url: .webpage_url, duration_string: .duration_string, thumbnail: .thumbnail, channel: (.channel // .uploader)}]\'',
-        escapeshellarg($searchTerm)
-    );
-}
-
 function build_play_pipeline_cmd(string $youtubeUrl, string $fifoPath, string $metadataFifoPath, string $metadataXml): string
 {
     $audioPipeline = sprintf(
@@ -214,32 +205,10 @@ function handle_playlist_remove(string $url): void
     echo json_encode(['status' => 'ok', 'items' => $items]);
 }
 
-function handle_search(string $query): void
+function handle_cache_search(array $results): void
 {
-    if (trim($query) === '') {
-        http_response_code(400);
-        echo json_encode(['status' => 'error', 'message' => 'empty query']);
-        return;
-    }
-
-    $output = shell_exec(build_yt_dlp_search_cmd($query));
-
-    if ($output === null || trim($output) === '') {
-        http_response_code(500);
-        echo json_encode(['status' => 'error', 'message' => 'search returned no results']);
-        return;
-    }
-
-    $results = json_decode($output, true);
-    if (!is_array($results)) {
-        http_response_code(500);
-        echo json_encode(['status' => 'error', 'message' => 'search output was not valid JSON']);
-        return;
-    }
-
     save_last_search($results);
-
-    echo json_encode($results);
+    echo json_encode(['status' => 'ok']);
 }
 
 function handle_last_search(): void
@@ -380,8 +349,9 @@ if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
     header('Content-Type: application/json');
     $action = $_POST['action'] ?? '';
 
-    if ($action === 'search') {
-        handle_search((string) ($_POST['query'] ?? ''));
+    if ($action === 'cache_search') {
+        $results = json_decode((string) ($_POST['results'] ?? '[]'), true);
+        handle_cache_search(is_array($results) ? $results : []);
     } elseif ($action === 'play') {
         handle_play((string) ($_POST['url'] ?? ''));
     } elseif ($action === 'playlist_list') {

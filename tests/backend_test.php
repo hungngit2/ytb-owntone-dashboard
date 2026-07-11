@@ -16,15 +16,6 @@ assert_true(is_youtube_url('https://youtube.com/shorts/abc123'), 'accepts shorts
 assert_true(!is_youtube_url('not a url'), 'rejects plain text');
 assert_true(!is_youtube_url('https://vimeo.com/123'), 'rejects other domains');
 
-$searchCmd = build_yt_dlp_search_cmd("lo-fi beats");
-assert_true(str_contains($searchCmd, 'yt-dlp'), 'search cmd calls yt-dlp');
-assert_true(str_contains($searchCmd, "'ytsearch30:lo-fi beats'"), 'search cmd embeds escaped query');
-assert_true(str_contains($searchCmd, 'jq'), 'search cmd pipes through jq');
-assert_true(!str_contains($searchCmd, '; rm'), 'search cmd has no unescaped injection for sanity');
-
-$injected = build_yt_dlp_search_cmd("foo'; rm -rf /");
-assert_true(!str_contains($injected, "'foo'; rm -rf /"), 'single quotes in query are escaped, not passed through raw');
-
 $playCmd = build_play_pipeline_cmd(
     'https://youtu.be/abc123',
     '/opt/docker/owntone/pipes/youtube.fifo',

@@ -94,23 +94,80 @@ function renderResults() {
   });
 }
 
+function parseIso8601Duration(iso) {
+  const match = /^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/.exec(iso || '') || [];
+  const hours = parseInt(match[1] || '0', 10);
+  const minutes = parseInt(match[2] || '0', 10);
+  const seconds = parseInt(match[3] || '0', 10);
+  const totalMinutes = hours * 60 + minutes;
+  return `${totalMinutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+// Runs entirely in the browser against YouTube's official Data API v3 —
+// deliberately NOT routed through the backend, since the previous
+// yt-dlp-based server-side search was heavy enough to freeze the host
+// under normal use (30 videos of full metadata extraction per search).
+async function searchYouTube(query) {
+  if (typeof YOUTUBE_API_KEY === 'undefined' || !YOUTUBE_API_KEY) {
+    throw new Error('YouTube API key not configured — copy config.example.js to config.js');
+  }
+
+  const searchUrl =
+    'https://www.googleapis.com/youtube/v3/search' +
+    `?key=${encodeURIComponent(YOUTUBE_API_KEY)}` +
+    '&part=snippet&type=video&maxResults=30' +
+    `&q=${encodeURIComponent(query)}`;
+
+  const searchRes = await fetch(searchUrl);
+  const searchData = await searchRes.json();
+
+  if (searchData.error) {
+    throw new Error(searchData.error.message || 'YouTube search failed');
+  }
+
+  const items = searchData.items || [];
+  const videoIds = items.map((item) => item.id.videoId).filter(Boolean);
+
+  let durationById = {};
+  if (videoIds.length > 0) {
+    const detailsUrl =
+      'https://www.googleapis.com/youtube/v3/videos' +
+      `?key=${encodeURIComponent(YOUTUBE_API_KEY)}` +
+      `&part=contentDetails&id=${videoIds.join(',')}`;
+    const detailsRes = await fetch(detailsUrl);
+    const detailsData = await detailsRes.json();
+    durationById = (detailsData.items || []).reduce((acc, v) => {
+      acc[v.id] = parseIso8601Duration(v.contentDetails.duration);
+      return acc;
+    }, {});
+  }
+
+  return items.map((item) => ({
+    title: item.snippet.title,
+    webpage_url: `https://www.youtube.com/watch?v=${item.id.videoId}`,
+    duration_string: durationById[item.id.videoId] || '',
+    thumbnail: (item.snippet.thumbnails.medium || item.snippet.thumbnails.default || {}).url || '',
+    channel: item.snippet.channelTitle,
+  }));
+}
+
+function cacheLastSearch(results) {
+  fetch('backend.php', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `action=cache_search&results=${encodeURIComponent(JSON.stringify(results))}`,
+  }).catch(() => {
+    // Best-effort only — losing the cross-device cache isn't worth surfacing an error for.
+  });
+}
+
 async function runSearch(query) {
   try {
-    const res = await fetch('backend.php', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `action=search&query=${encodeURIComponent(query)}`,
-    });
-    const data = await res.json();
-
-    if (Array.isArray(data)) {
-      searchResults = data;
-      renderResults();
-    } else {
-      showError((data && data.message) || 'Search failed');
-    }
+    searchResults = await searchYouTube(query);
+    renderResults();
+    cacheLastSearch(searchResults);
   } catch (err) {
-    showError('Search request failed');
+    showError(err.message || 'Search request failed');
   }
 }
 
