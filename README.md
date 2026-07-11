@@ -7,13 +7,19 @@ YouTube URL, and it plays through OwnTone by piping audio into a named pipe.
 ## How it works
 
 - Type a search term or paste a YouTube URL into the single input box.
-  - A YouTube URL plays immediately.
-  - Plain text triggers a `yt-dlp` search (30 results, paginated 5 at a time).
-- Playing a track kills any in-flight stream, then launches a detached
-  `yt-dlp | ffmpeg` pipeline that writes WAV audio into OwnTone's named pipe.
+  - A YouTube URL resolves its title/thumbnail/channel and shows it as a
+    single result card — it doesn't auto-play.
+  - Plain text triggers a `yt-dlp` search (30 results, one scrollable list).
+- Clicking Play kills any in-flight stream, then launches a detached
+  `yt-dlp | ffmpeg -re` pipeline that writes WAV audio into OwnTone's named
+  pipe at real playback speed (not a burst — OwnTone needs time to attach as
+  a live reader).
 - The backend resolves the pipe's current OwnTone track id and tells OwnTone
   (via its REST API) to clear the queue, add that track, and start playback.
 - The UI stays in sync with OwnTone over its WebSocket API — no polling.
+- A "Playlist" tab lets you save/remove search results; both the playlist
+  and the last search are cached server-side so a page refresh or a
+  different browser sees the same thing.
 
 ## Requirements
 
@@ -45,27 +51,45 @@ root, so `tests/`, `docs/`, and `.git` are never served over HTTP.
 2. Confirm the constants at the top of `public/backend.php` match your
    environment:
    - `OWNTONE_BASE` — OwnTone's base URL (default `http://127.0.0.1:3689`)
-   - `YOUTUBE_FIFO_PATH` — path to the named pipe
+   - `YOUTUBE_FIFO_PATH` — host path to the named pipe (for writing audio)
+   - `OWNTONE_PIPE_DIRECTORY` — the same pipe's path as OwnTone itself sees
+     it (e.g. inside its container), used to look up the pipe's track id
    - `YOUTUBE_FIFO_MATCH` — substring used to find the pipe's library track
-3. Open the site in a browser on the same LAN as the server.
+   - `PLAYLIST_FILE` / `LAST_SEARCH_FILE` — **must be an absolute path
+     outside your web server's document root.** If your document root
+     covers more than this app's own directory (e.g. a shared multi-app
+     root like `/var/www`), a path such as `__DIR__ . '/../data'` can land
+     right back inside it and become directly downloadable over HTTP —
+     verify with `curl http://<host>/<relative-path-to-file>` and confirm
+     it 404s.
+3. In OwnTone's config, add the pipe's directory to `directories` so it's
+   indexed as a library track, and add `<pipe>.metadata` if you want real
+   metadata (not implemented here — see the design doc).
+4. Open the site in a browser on the same LAN as the server.
 
-## Known items to verify on your host
+## Known host-specific gotchas
 
-These couldn't be exercised in development (no live OwnTone/yt-dlp/ffmpeg
-available there) — see
-[`docs/superpowers/plans/2026-07-09-owntone-youtube-dashboard.md`](docs/superpowers/plans/2026-07-09-owntone-youtube-dashboard.md)
-for the full checklist:
+Found and fixed against a real deployment — worth re-checking if you
+redeploy elsewhere:
 
-- **WebSocket endpoint** — `public/app.js` connects to
-  `ws://<host>:3689/api/v6/ws`. Confirm this matches your OwnTone version's
-  actual WebSocket port/path/subprotocol; if it's wrong, playback still works
-  but the live UI (progress, volume, play/pause) won't update.
-- **Search latency** — searching 30 YouTube results can take longer than
-  PHP's default `max_execution_time`. Raise the timeout for `public/backend.php`
-  if searches are timing out.
-- **Pipe track resolution timing** — if OwnTone only registers the fifo as a
-  library track after first write (rather than at startup), the very first
-  play attempt could race against that registration.
+- **OwnTone's WebSocket** listens on a *separate* port from its HTTP API
+  (returned by `GET /api/config`'s `websocket_port`), at the root path, and
+  requires the `notify` subprotocol — `app.js` discovers this dynamically,
+  it isn't hardcoded to port 3689.
+- **`yt-dlp`/`ffmpeg` must actually be installed** and on `PATH` for the
+  PHP-FPM user specifically (not just your login shell) — `ffmpeg -re` is
+  required so OwnTone has time to attach as a live pipe reader before the
+  whole file has already been written and closed.
+- **Search latency**: extracting full metadata for 30 videos can exceed a
+  reverse proxy's default timeout (nginx's default is 60s). Give
+  `backend.php`'s location block its own longer `fastcgi_read_timeout`.
+  Search also touches the CPU hard enough on low-power hardware to
+  temporarily starve other services (including SSH) — avoid triggering
+  concurrent searches.
+- **Directory traversal permissions**: a file can be `0777` and still be
+  unreadable/unwritable by the PHP process if *any parent directory* in the
+  path lacks execute/search permission for that user — check the whole
+  chain with `namei -l <path>`, not just the file itself.
 
 ## Tests
 

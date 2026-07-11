@@ -6,9 +6,12 @@ define('YOUTUBE_FIFO_MATCH', 'youtube');
 // Path as OwnTone sees it inside its container/library config — distinct from
 // YOUTUBE_FIFO_PATH, which is the host path used to write the audio stream.
 define('OWNTONE_PIPE_DIRECTORY', '/srv/music/pipes');
-// Outside the web root (public/) so the raw JSON files are never web-reachable.
-define('PLAYLIST_FILE', __DIR__ . '/../data/playlist.json');
-define('LAST_SEARCH_FILE', __DIR__ . '/../data/last_search.json');
+// Absolute path outside nginx's document root, which on the deployed host
+// (root /mnt/appsrv/www;) covers this app's whole parent directory — a
+// relative "../data" would land inside /mnt/appsrv/www/data and be directly
+// web-reachable. Adjust if your document root differs.
+define('PLAYLIST_FILE', '/mnt/appsrv/ytb-data/playlist.json');
+define('LAST_SEARCH_FILE', '/mnt/appsrv/ytb-data/last_search.json');
 
 function is_youtube_url(string $url): bool
 {
