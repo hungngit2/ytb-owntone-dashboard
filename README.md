@@ -38,7 +38,10 @@ piping audio into a named pipe.
   next item itself once the current one actually finishes — no browser tab
   needs to stay open for this to work. A shuffle toggle changes what
   "next" means (random, never repeating the current item) and can be
-  flipped mid-playlist without interrupting what's currently playing.
+  flipped mid-playlist without interrupting what's currently playing. The
+  next sequential track is also pre-downloaded in the background while
+  the current one plays (see "Preloading the next track" below), so
+  switching is close to instant instead of waiting on yt-dlp each time.
 - The last search and all playlists are cached server-side (as JSON files)
   so a page refresh or a different browser sees the same thing.
 
@@ -103,6 +106,15 @@ path, `action=play` still does a duration lookup that can take 10-15s.
 | `OWNTONE_PIPE_DIRECTORY` | The same pipe's path as **OwnTone itself** sees it (e.g. inside its container/docker volume mount) — used to look up the pipe's library track id via OwnTone's API. Distinct from `YOUTUBE_FIFO_PATH` since they can differ (host path vs. container path) |
 | `YOUTUBE_FIFO_MATCH` | Substring used to find the pipe's library track by path |
 | `PLAYLIST_FILE` / `LAST_SEARCH_FILE` | **Must be an absolute path outside your web server's document root.** If your document root covers more than this app's own directory (a shared multi-app root), a path like `__DIR__ . '/../data'` can land right back inside it and become directly downloadable over HTTP — verify with `curl http://<host>/<relative-path>` and confirm it 404s. Currently `/mnt/appsrv/ytb-data/*.json` on the deployed host |
+| `QUEUE_STATE_FILE` | Persisted "what's playing" (queue items + current index + shuffle), read by `bin/queue-daemon.php` (see below) so auto-advance works with no browser open. Same outside-the-document-root rule as above. Currently `/mnt/appsrv/ytb-data/queue_state.json` |
+| `AUDIO_CACHE_DIR` | Holds at most one pre-downloaded "next track" audio file, used to make Next/auto-advance skip yt-dlp's resolve+download step (see "Preloading the next track" below). Currently `/mnt/appsrv/ytb-cache` |
+
+All of the paths above need their **directory** created and `chown`'d to the PHP-FPM/web server user *before first use* — if that directory's parent (e.g. `/mnt/appsrv`) isn't writable by that user, PHP's own `mkdir()` fallback will silently fail and the feature it backs (playlists, auto-advance, preload) will just quietly not work. E.g.:
+
+```bash
+mkdir -p /mnt/appsrv/ytb-data /mnt/appsrv/ytb-cache
+chown www-data:www-data /mnt/appsrv/ytb-data /mnt/appsrv/ytb-cache
+```
 
 ### 4. OwnTone configuration
 
@@ -112,7 +124,26 @@ path, `action=play` still does a duration lookup that can take 10-15s.
 - No separate `.metadata` pipe setup needed on your end — `backend.php`
   creates `<YOUTUBE_FIFO_PATH>.metadata` itself on first play if missing.
 
-### 5. Open the site
+### 5. Auto-play-next daemon (works even with the browser closed)
+
+`bin/queue-daemon.php` polls OwnTone every 2s and starts the next queued
+item itself once the current one finishes — this is a separate always-running
+process, not something any browser tab drives.
+
+1. Copy `bin/queue-daemon.php` wherever you deploy `backend.php` (it looks
+   for `backend.php` either as a `bin/` + `public/` sibling, or flat
+   alongside itself — whichever layout you use).
+2. Copy `docs/queue-daemon.service` to `/etc/systemd/system/`, adjusting
+   `ExecStart` to match your deployed path.
+3. Enable and start it:
+   ```bash
+   systemctl daemon-reload
+   systemctl enable queue-daemon.service
+   systemctl start queue-daemon.service
+   ```
+4. `systemctl status queue-daemon.service` should show `Active: active (running)`.
+
+### 6. Open the site
 
 Open it in a browser on the same LAN as the server.
 
@@ -146,6 +177,32 @@ redeploy elsewhere:
   normal use — confirmed multiple times, requiring a physical power-cycle.
   Search now runs entirely in the browser against the YouTube Data API.
   Don't reintroduce a server-side search path without a very good reason.
+- **"Finished" detection needs slack, not an exact match.** The queue
+  daemon decides a track ended when OwnTone reports paused *and* progress
+  is within 4s of the reported duration — not 1s. The duration we send is
+  yt-dlp's rounded-to-the-second estimate, and the actual streamed/decoded
+  audio has been observed ending ~2s short of it; too tight a window means
+  finished tracks never get detected and playback just stalls forever.
+- **Prev/Next and the playing-item highlight are driven by server state,
+  not browser memory.** `app.js` re-fetches `action=queue_state` on every
+  websocket tick (piggybacking on OwnTone's own event cadence) instead of
+  tracking "what's playing" locally — local-only state goes stale the
+  moment the page is refreshed or the daemon advances the track with no
+  browser open at all.
+
+### Preloading the next track
+
+While a track plays, the backend pre-downloads the *next sequential* item
+(via `maybe_preload_next` in `backend.php`) into `AUDIO_CACHE_DIR`, keyed
+by video id. When that track's turn comes, `play_url` skips yt-dlp
+entirely and streams from the cached file instead (`cat file | ffmpeg -re`)
+— removing yt-dlp's resolve+download latency from the critical path of
+pressing Next or auto-advancing. Only one file is ever cached at a time; a
+stray/abandoned preload is cleared out (but never the file the currently-
+playing pipeline might have just started reading) the next time a new
+preload kicks off. Shuffle mode has no fixed "next" to preload, so it's
+skipped there — the daemon only picks the random next track once the
+current one actually finishes.
 
 ## Tests
 

@@ -32,6 +32,41 @@ assert_true(str_contains($playCmd, 'youtube.fifo.metadata'), 'play cmd writes me
 assert_true(strpos($playCmd, 'printf') < strpos($playCmd, 'yt-dlp --no-playlist'), 'metadata write is backgrounded ahead of the audio pipeline, not after it');
 assert_true(str_ends_with(trim($playCmd), '&'), 'play cmd is backgrounded');
 
+$cachedPlayCmd = build_play_pipeline_cmd(
+    'https://youtu.be/abc123',
+    '/opt/docker/owntone/pipes/youtube.fifo',
+    '/opt/docker/owntone/pipes/youtube.fifo.metadata',
+    '<item><type>test</type></item>',
+    '/mnt/appsrv/ytb-cache/abc12345678.audio'
+);
+assert_true(str_contains($cachedPlayCmd, 'cat ') && str_contains($cachedPlayCmd, 'abc12345678.audio'), 'cached play cmd reads from the cache file instead of yt-dlp');
+assert_true(!str_contains($cachedPlayCmd, 'yt-dlp'), 'cached play cmd skips yt-dlp entirely');
+assert_true(str_contains($cachedPlayCmd, 'ffmpeg -re -i pipe:0'), 'cached play cmd still paces playback through ffmpeg -re');
+assert_true(str_contains($cachedPlayCmd, 'rm -f') && substr_count($cachedPlayCmd, 'abc12345678.audio') >= 2, 'cached play cmd deletes the cache file after consuming it');
+
+assert_true(extract_youtube_video_id('https://www.youtube.com/watch?v=dQw4w9WgXcQ') === 'dQw4w9WgXcQ', 'extracts id from a watch url');
+assert_true(extract_youtube_video_id('https://youtu.be/dQw4w9WgXcQ') === 'dQw4w9WgXcQ', 'extracts id from a short url');
+assert_true(extract_youtube_video_id('https://youtube.com/shorts/dQw4w9WgXcQ') === 'dQw4w9WgXcQ', 'extracts id from a shorts url');
+assert_true(extract_youtube_video_id('not a youtube url') === null, 'returns null when no id pattern matches');
+
+assert_true(audio_cache_path('https://youtu.be/dQw4w9WgXcQ', '/tmp/cache') === '/tmp/cache/dQw4w9WgXcQ.audio', 'audio_cache_path builds a path keyed by video id');
+assert_true(audio_cache_path('not a url', '/tmp/cache') === null, 'audio_cache_path returns null when no video id can be extracted');
+
+$queueItems = [
+    ['webpage_url' => 'https://youtu.be/aaaaaaaaaaa'],
+    ['webpage_url' => 'https://youtu.be/bbbbbbbbbbb'],
+    ['webpage_url' => 'https://youtu.be/ccccccccccc'],
+];
+assert_true(next_preload_target($queueItems, 0, false) === 'https://youtu.be/bbbbbbbbbbb', 'next_preload_target picks the following sequential item');
+assert_true(next_preload_target($queueItems, 2, false) === null, 'next_preload_target is null at the end of the queue');
+assert_true(next_preload_target($queueItems, 0, true) === null, 'next_preload_target is null in shuffle mode (no fixed next to preload)');
+
+$preloadCmd = build_preload_cmd('https://youtu.be/dQw4w9WgXcQ', '/tmp/cache/dQw4w9WgXcQ.audio');
+assert_true(str_starts_with($preloadCmd, 'nohup sh -c'), 'preload cmd is wrapped in nohup');
+assert_true(str_contains($preloadCmd, 'yt-dlp --no-playlist -f bestaudio'), 'preload cmd downloads bestaudio');
+assert_true(str_contains($preloadCmd, 'dQw4w9WgXcQ.audio.part'), 'preload cmd downloads to a .part temp path first');
+assert_true(str_contains($preloadCmd, 'mv ') && strpos($preloadCmd, 'mv ') < strrpos($preloadCmd, 'dQw4w9WgXcQ.audio'), 'preload cmd atomically renames into place on success');
+
 $durationCmd = build_yt_dlp_duration_cmd('https://youtu.be/abc123');
 assert_true(str_contains($durationCmd, "yt-dlp --no-playlist --skip-download --print duration"), 'duration cmd asks yt-dlp for duration only, no download');
 assert_true(str_contains($durationCmd, "'https://youtu.be/abc123'"), 'duration cmd embeds the escaped url');
