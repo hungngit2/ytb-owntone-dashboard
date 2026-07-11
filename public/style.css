@@ -287,6 +287,15 @@ body {
   overflow: hidden;
 }
 
+/* Only draggable once the current track finishes background-caching (see
+   serverQueue.seekable in app.js) — enlarges the hit area a bit so it's
+   easier to tap precisely once it's actually interactive. */
+#progress-track.seekable {
+  cursor: pointer;
+  height: 8px;
+  margin: -1px 0;
+}
+
 #progress-fill {
   height: 100%;
   width: 0%;

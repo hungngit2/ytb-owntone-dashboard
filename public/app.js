@@ -486,6 +486,7 @@ async function syncServerQueue() {
     shuffleEnabled = Boolean(serverQueue.shuffle);
     document.getElementById('shuffle-btn').classList.toggle('active', shuffleEnabled);
     updatePlayingHighlight();
+    document.getElementById('progress-track').classList.toggle('seekable', Boolean(serverQueue.seekable));
   } catch (err) {
     // Non-fatal: local currentTrackInfo still covers this tab's own plays.
   }
@@ -712,15 +713,43 @@ function startProgressTicker(isPlaying, progressSeconds, durationSeconds) {
   }, 1000);
 }
 
-// Display-only, deliberately not clickable/seekable: OwnTone can't seek
-// within a pipe source (there's no file to seek in, only a live stream
-// PHP is writing to it in real time) — the progress bar just reflects
-// position, dragging it wouldn't do anything.
+// Only draggable once the current track is fully cached server-side (see
+// serverQueue.seekable) — OwnTone can't seek a live pipe stream, only a
+// real file on disk, so dragging is a no-op (and #progress-track lacks
+// the .seekable class, so it isn't even clickable) until that download
+// finishes in the background.
 function updateProgressDisplay(progressSeconds, durationSeconds) {
   const pct = durationSeconds > 0 ? (progressSeconds / durationSeconds) * 100 : 0;
   document.getElementById('progress-fill').style.width = `${pct}%`;
   document.getElementById('time-current').textContent = formatTime(Math.floor(progressSeconds));
   document.getElementById('time-total').textContent = formatTime(durationSeconds);
+}
+
+async function seekTo(targetSeconds) {
+  if (!serverQueue.seekable || syncedDurationSeconds <= 0) {
+    return;
+  }
+  const clamped = Math.max(0, Math.min(targetSeconds, syncedDurationSeconds));
+
+  // Reflect the drag immediately rather than waiting for the backend
+  // round-trip (which restarts the pipe from the seeked offset).
+  startProgressTicker(lastKnownIsPlaying, clamped, syncedDurationSeconds);
+
+  try {
+    const res = await fetch('backend.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `action=seek&seconds=${Math.floor(clamped)}`,
+    });
+    const data = await res.json();
+    if (data.status !== 'ok') {
+      showError(data.message || 'Seek failed');
+    }
+  } catch (err) {
+    showError('Seek request failed');
+  }
+
+  refreshPlayerState();
 }
 
 function formatTime(totalSeconds) {
@@ -834,6 +863,16 @@ if (typeof document !== 'undefined') {
   document.getElementById('prev-btn').addEventListener('click', () => playRelative(-1));
   document.getElementById('next-btn').addEventListener('click', () => playRelative(1));
   document.getElementById('stop-btn').addEventListener('click', stopPlayback);
+
+  document.getElementById('progress-track').addEventListener('click', (event) => {
+    const track = event.currentTarget;
+    if (!track.classList.contains('seekable')) {
+      return;
+    }
+    const rect = track.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min((event.clientX - rect.left) / rect.width, 1));
+    seekTo(ratio * syncedDurationSeconds);
+  });
 
   document.getElementById('volume-slider').addEventListener('input', (event) => {
     document.getElementById('volume-value').textContent = `${event.target.value}%`;
