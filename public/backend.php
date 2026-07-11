@@ -129,6 +129,50 @@ function remove_from_playlist_items(array $items, string $url): array
     }));
 }
 
+function find_playlist_index(array $playlists, string $name): ?int
+{
+    foreach ($playlists as $i => $playlist) {
+        if (($playlist['name'] ?? null) === $name) {
+            return $i;
+        }
+    }
+
+    return null;
+}
+
+function create_playlist(array $playlists, string $name): array
+{
+    if (find_playlist_index($playlists, $name) !== null) {
+        return $playlists;
+    }
+
+    $playlists[] = ['name' => $name, 'items' => []];
+    return $playlists;
+}
+
+function add_item_to_named_playlist(array $playlists, string $name, array $item): array
+{
+    $index = find_playlist_index($playlists, $name);
+    if ($index === null) {
+        $playlists[] = ['name' => $name, 'items' => []];
+        $index = count($playlists) - 1;
+    }
+
+    $playlists[$index]['items'] = add_to_playlist_items($playlists[$index]['items'], $item);
+    return $playlists;
+}
+
+function remove_item_from_named_playlist(array $playlists, string $name, string $url): array
+{
+    $index = find_playlist_index($playlists, $name);
+    if ($index === null) {
+        return $playlists;
+    }
+
+    $playlists[$index]['items'] = remove_from_playlist_items($playlists[$index]['items'], $url);
+    return $playlists;
+}
+
 function read_json_file(string $path): array
 {
     if (!file_exists($path)) {
@@ -169,17 +213,33 @@ function save_last_search(array $results, string $path = LAST_SEARCH_FILE): void
     write_json_file($results, $path);
 }
 
-function handle_playlist_list(): void
+function handle_playlists_list(): void
 {
     echo json_encode(load_playlist());
 }
 
-function handle_playlist_add(array $item): void
+function handle_playlist_create(string $name): void
 {
-    $url = $item['webpage_url'] ?? '';
-    if (!is_youtube_url($url)) {
+    $name = trim($name);
+    if ($name === '') {
         http_response_code(400);
-        echo json_encode(['status' => 'error', 'message' => 'not a valid YouTube URL']);
+        echo json_encode(['status' => 'error', 'message' => 'playlist name required']);
+        return;
+    }
+
+    $playlists = create_playlist(load_playlist(), $name);
+    save_playlist($playlists);
+
+    echo json_encode(['status' => 'ok', 'playlists' => $playlists]);
+}
+
+function handle_playlist_add_item(string $name, array $item): void
+{
+    $name = trim($name);
+    $url = $item['webpage_url'] ?? '';
+    if ($name === '' || !is_youtube_url($url)) {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'message' => 'invalid playlist name or url']);
         return;
     }
 
@@ -191,18 +251,18 @@ function handle_playlist_add(array $item): void
         'channel' => $item['channel'] ?? '',
     ];
 
-    $items = add_to_playlist_items(load_playlist(), $entry);
-    save_playlist($items);
+    $playlists = add_item_to_named_playlist(load_playlist(), $name, $entry);
+    save_playlist($playlists);
 
-    echo json_encode(['status' => 'ok', 'items' => $items]);
+    echo json_encode(['status' => 'ok', 'playlists' => $playlists]);
 }
 
-function handle_playlist_remove(string $url): void
+function handle_playlist_remove_item(string $name, string $url): void
 {
-    $items = remove_from_playlist_items(load_playlist(), $url);
-    save_playlist($items);
+    $playlists = remove_item_from_named_playlist(load_playlist(), $name, $url);
+    save_playlist($playlists);
 
-    echo json_encode(['status' => 'ok', 'items' => $items]);
+    echo json_encode(['status' => 'ok', 'playlists' => $playlists]);
 }
 
 function handle_cache_search(array $results): void
@@ -354,18 +414,20 @@ if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
         handle_cache_search(is_array($results) ? $results : []);
     } elseif ($action === 'play') {
         handle_play((string) ($_POST['url'] ?? ''));
-    } elseif ($action === 'playlist_list') {
-        handle_playlist_list();
-    } elseif ($action === 'playlist_add') {
-        handle_playlist_add([
+    } elseif ($action === 'playlists_list') {
+        handle_playlists_list();
+    } elseif ($action === 'playlist_create') {
+        handle_playlist_create((string) ($_POST['name'] ?? ''));
+    } elseif ($action === 'playlist_add_item') {
+        handle_playlist_add_item((string) ($_POST['name'] ?? ''), [
             'webpage_url' => (string) ($_POST['webpage_url'] ?? ''),
             'title' => (string) ($_POST['title'] ?? ''),
             'thumbnail' => (string) ($_POST['thumbnail'] ?? ''),
             'duration_string' => (string) ($_POST['duration_string'] ?? ''),
             'channel' => (string) ($_POST['channel'] ?? ''),
         ]);
-    } elseif ($action === 'playlist_remove') {
-        handle_playlist_remove((string) ($_POST['webpage_url'] ?? ''));
+    } elseif ($action === 'playlist_remove_item') {
+        handle_playlist_remove_item((string) ($_POST['name'] ?? ''), (string) ($_POST['webpage_url'] ?? ''));
     } elseif ($action === 'last_search') {
         handle_last_search();
     } elseif ($action === 'resolve_url') {

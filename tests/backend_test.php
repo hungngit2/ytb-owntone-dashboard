@@ -94,6 +94,29 @@ assert_true(count($loaded) === 1 && $loaded[0]['webpage_url'] === 'https://youtu
 unlink($tmpPlaylistFile);
 rmdir(dirname($tmpPlaylistFile));
 
+$playlists = [];
+assert_true(find_playlist_index($playlists, 'Yêu thích') === null, 'find_playlist_index returns null when no playlists exist');
+
+$playlists = create_playlist($playlists, 'Yêu thích');
+assert_true(count($playlists) === 1 && $playlists[0]['name'] === 'Yêu thích' && $playlists[0]['items'] === [], 'create_playlist adds a new empty playlist');
+
+$playlists = create_playlist($playlists, 'Yêu thích');
+assert_true(count($playlists) === 1, 'create_playlist does not duplicate an existing name');
+
+$playlists = add_item_to_named_playlist($playlists, 'Yêu thích', ['webpage_url' => 'https://youtu.be/xxx', 'title' => 'Song X']);
+assert_true(count($playlists[0]['items']) === 1, 'add_item_to_named_playlist adds the item to the matching playlist');
+
+$playlists = add_item_to_named_playlist($playlists, 'Workout', ['webpage_url' => 'https://youtu.be/yyy', 'title' => 'Song Y']);
+assert_true(count($playlists) === 2, 'add_item_to_named_playlist auto-creates the playlist if it does not exist yet');
+assert_true(find_playlist_index($playlists, 'Workout') !== null, 'the auto-created playlist is findable by name');
+
+$playlists = remove_item_from_named_playlist($playlists, 'Yêu thích', 'https://youtu.be/xxx');
+assert_true(count($playlists[0]['items']) === 0, 'remove_item_from_named_playlist removes the item from the matching playlist only');
+assert_true(count($playlists[1]['items']) === 1, 'remove_item_from_named_playlist leaves other playlists untouched');
+
+$unchanged = remove_item_from_named_playlist($playlists, 'Nonexistent', 'https://youtu.be/xxx');
+assert_true($unchanged === $playlists, 'remove_item_from_named_playlist is a no-op for a nonexistent playlist name');
+
 $tmpSearchFile = sys_get_temp_dir() . '/last_search_test_' . uniqid() . '/last_search.json';
 assert_true(load_last_search($tmpSearchFile) === [], 'load_last_search returns empty array when file does not exist');
 

@@ -25,11 +25,16 @@ if (typeof module !== 'undefined' && module.exports) {
 }
 
 let searchResults = [];
-let playlistItems = [];
+let playlists = [];
+let currentPlaylistName = null;
 let currentView = 'search';
 
 function activeItems() {
-  return currentView === 'search' ? searchResults : playlistItems;
+  if (currentView === 'search') {
+    return searchResults;
+  }
+  const playlist = playlists.find((p) => p.name === currentPlaylistName);
+  return playlist ? playlist.items : [];
 }
 
 function renderResults() {
@@ -220,11 +225,19 @@ function setActiveTab(view) {
 
 function switchView(view) {
   setActiveTab(view);
+  document.getElementById('playlist-controls').style.display = view === 'playlist' ? 'flex' : 'none';
 
   if (view === 'playlist') {
-    loadPlaylist();
+    loadPlaylists();
   } else {
     renderResults();
+  }
+}
+
+function playAll() {
+  const items = activeItems();
+  if (items.length > 0) {
+    playFromBackend(items[0].webpage_url);
   }
 }
 
@@ -248,27 +261,65 @@ async function loadLastSearch() {
   }
 }
 
-async function loadPlaylist() {
+async function loadPlaylists() {
   try {
     const res = await fetch('backend.php', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: 'action=playlist_list',
+      body: 'action=playlists_list',
     });
     const data = await res.json();
 
     if (Array.isArray(data)) {
-      playlistItems = data;
+      playlists = data;
+      if ((!currentPlaylistName || !playlists.some((p) => p.name === currentPlaylistName)) && playlists.length > 0) {
+        currentPlaylistName = playlists[0].name;
+      }
+      renderPlaylistSelector();
       renderResults();
     } else {
-      showError((data && data.message) || 'Failed to load playlist');
+      showError((data && data.message) || 'Failed to load playlists');
     }
   } catch (err) {
     showError('Playlist request failed');
   }
 }
 
+function renderPlaylistSelector() {
+  const selector = document.getElementById('playlist-selector');
+  selector.innerHTML = '';
+
+  playlists.forEach((playlist) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'playlist-pill';
+    btn.classList.toggle('active', playlist.name === currentPlaylistName);
+    btn.textContent = `${playlist.name} (${playlist.items.length})`;
+    btn.addEventListener('click', () => {
+      currentPlaylistName = playlist.name;
+      renderPlaylistSelector();
+      renderResults();
+    });
+    selector.appendChild(btn);
+  });
+}
+
+function promptForPlaylistName() {
+  const existingNames = playlists.map((p) => p.name).join(', ');
+  const message =
+    playlists.length > 0
+      ? `Lưu vào playlist nào? (có sẵn: ${existingNames})\nNhập tên khác để tạo playlist mới.`
+      : 'Tên playlist mới:';
+  const suggestion = currentPlaylistName || (playlists[0] && playlists[0].name) || 'Yêu thích';
+  return (window.prompt(message, suggestion) || '').trim();
+}
+
 async function saveToPlaylist(item, triggerBtn) {
+  const name = promptForPlaylistName();
+  if (!name) {
+    return;
+  }
+
   if (triggerBtn) {
     triggerBtn.disabled = true;
   }
@@ -278,7 +329,8 @@ async function saveToPlaylist(item, triggerBtn) {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body:
-        'action=playlist_add' +
+        'action=playlist_add_item' +
+        `&name=${encodeURIComponent(name)}` +
         `&webpage_url=${encodeURIComponent(item.webpage_url || '')}` +
         `&title=${encodeURIComponent(item.title || '')}` +
         `&thumbnail=${encodeURIComponent(item.thumbnail || '')}` +
@@ -288,7 +340,8 @@ async function saveToPlaylist(item, triggerBtn) {
     const data = await res.json();
 
     if (data.status === 'ok') {
-      playlistItems = data.items;
+      playlists = data.playlists;
+      currentPlaylistName = name;
       if (triggerBtn) {
         triggerBtn.textContent = '★';
       }
@@ -304,6 +357,28 @@ async function saveToPlaylist(item, triggerBtn) {
   }
 }
 
+async function createPlaylist(name) {
+  try {
+    const res = await fetch('backend.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `action=playlist_create&name=${encodeURIComponent(name)}`,
+    });
+    const data = await res.json();
+
+    if (data.status === 'ok') {
+      playlists = data.playlists;
+      currentPlaylistName = name;
+      renderPlaylistSelector();
+      renderResults();
+    } else {
+      showError(data.message || 'Create playlist failed');
+    }
+  } catch (err) {
+    showError('Create playlist request failed');
+  }
+}
+
 async function removeFromPlaylist(webpageUrl, triggerBtn) {
   if (triggerBtn) {
     triggerBtn.disabled = true;
@@ -313,12 +388,16 @@ async function removeFromPlaylist(webpageUrl, triggerBtn) {
     const res = await fetch('backend.php', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `action=playlist_remove&webpage_url=${encodeURIComponent(webpageUrl)}`,
+      body:
+        'action=playlist_remove_item' +
+        `&name=${encodeURIComponent(currentPlaylistName || '')}` +
+        `&webpage_url=${encodeURIComponent(webpageUrl)}`,
     });
     const data = await res.json();
 
     if (data.status === 'ok') {
-      playlistItems = data.items;
+      playlists = data.playlists;
+      renderPlaylistSelector();
       renderResults();
     } else {
       showError(data.message || 'Remove failed');
@@ -369,10 +448,21 @@ function renderNowPlaying(fallbackTitle) {
 
   const thumbEl = document.getElementById('disc-thumb');
   const heroBgImg = document.getElementById('hero-bg-img');
-  if (currentTrackInfo.thumbnail) {
-    thumbEl.src = currentTrackInfo.thumbnail;
+
+  // After a page refresh, currentTrackInfo is empty (it only ever gets set
+  // by a play action in this session) even though OwnTone may still be
+  // playing something. Fall back to OwnTone's own artwork endpoint, which
+  // is populated by the PICT metadata we send on play — but only when a
+  // real queue item exists (fallbackTitle set), and only if that image
+  // actually loads (OwnTone returns a 404 if no artwork was ever sent).
+  const thumbnailUrl = currentTrackInfo.thumbnail || (fallbackTitle ? `${owntoneBase()}/artwork/nowplaying` : '');
+
+  if (thumbnailUrl) {
+    thumbEl.onerror = () => thumbEl.classList.remove('visible');
+    thumbEl.src = thumbnailUrl;
     thumbEl.classList.add('visible');
-    heroBgImg.src = currentTrackInfo.thumbnail;
+    heroBgImg.onerror = () => heroBgImg.removeAttribute('src');
+    heroBgImg.src = thumbnailUrl;
   } else {
     thumbEl.classList.remove('visible');
     heroBgImg.removeAttribute('src');
@@ -585,6 +675,18 @@ if (typeof document !== 'undefined') {
   document.getElementById('tab-search').addEventListener('click', () => switchView('search'));
   document.getElementById('tab-playlist').addEventListener('click', () => switchView('playlist'));
 
+  document.getElementById('create-playlist-btn').addEventListener('click', () => {
+    const input = document.getElementById('new-playlist-name');
+    const name = input.value.trim();
+    if (!name) {
+      return;
+    }
+    createPlaylist(name);
+    input.value = '';
+  });
+
+  document.getElementById('play-all-btn').addEventListener('click', playAll);
+
   document.getElementById('play-pause-btn').addEventListener('click', () => {
     const endpoint = lastKnownIsPlaying ? 'pause' : 'play';
     fetch(`${owntoneBase()}/api/player/${endpoint}`, { method: 'PUT' })
@@ -606,4 +708,5 @@ if (typeof document !== 'undefined') {
 
   connectWebSocket();
   loadLastSearch();
+  loadPlaylists();
 }
