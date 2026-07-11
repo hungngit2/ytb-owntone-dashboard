@@ -439,10 +439,19 @@ function owntoneBase() {
 
 let currentTrackInfo = { title: null, thumbnail: null, channel: null, webpageUrl: null };
 
+// OwnTone's queue title is the raw pipe filename ("youtube.fifo") whenever
+// our metadata hasn't (yet, or ever) reached it — e.g. right after a fresh
+// page load before any play action in this session. Not something to show
+// a user, so it's treated the same as "nothing playing".
+function isRawFifoFilename(title) {
+  return /\.fifo$/i.test(title || '');
+}
+
 function renderNowPlaying(fallbackTitle) {
   const titleEl = document.getElementById('now-title');
   titleEl.classList.remove('loading');
-  titleEl.textContent = currentTrackInfo.title || fallbackTitle || 'No track playing';
+  const displayFallback = isRawFifoFilename(fallbackTitle) ? '' : fallbackTitle;
+  titleEl.textContent = currentTrackInfo.title || displayFallback || 'Chưa phát bài nào';
 
   document.getElementById('now-subtitle').textContent = currentTrackInfo.channel || '';
 
