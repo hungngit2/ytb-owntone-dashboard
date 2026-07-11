@@ -241,6 +241,27 @@ body {
   filter: brightness(1.25);
 }
 
+#stop-btn {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.9);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s ease, filter 0.15s ease;
+}
+
+#stop-btn:hover {
+  transform: scale(1.1);
+  filter: brightness(1.25);
+  color: #f87171;
+}
+
 .hero-progress {
   position: absolute;
   bottom: 0;
@@ -641,5 +662,37 @@ body {
     width: 64px;
     height: 64px;
     top: 40px;
+  }
+}
+
+/* Short phones (iPhone SE and similar, ~667px tall or less, further
+   reduced by Safari's own UI chrome) leave barely any room for the
+   results list under the fixed-height player hero — compact everything
+   above the list so more than 1-2 rows are ever visible. */
+@media (max-height: 700px) {
+  .hero-art {
+    height: 150px;
+  }
+
+  .hero-thumb-wrap {
+    width: 56px;
+    height: 56px;
+    top: 28px;
+  }
+
+  .hero-panel {
+    padding: 10px 16px;
+  }
+
+  #search-form {
+    margin-bottom: 8px;
+  }
+
+  .volume-label-row {
+    margin-bottom: 4px;
+  }
+
+  #view-tabs {
+    padding: 8px 16px 0;
   }
 }
