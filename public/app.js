@@ -1,3 +1,21 @@
+// Inline SVG instead of emoji for anything set dynamically — emoji render
+// as a different glyph per OS/browser (Windows vs Android vs iOS emoji
+// sets); SVG paths look identical everywhere.
+const ICONS = {
+  play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>',
+  pause:
+    '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>',
+  volume:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor" stroke="none"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>',
+  muted:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor" stroke="none"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>',
+  star: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>',
+  starFilled:
+    '<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>',
+  trash:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>',
+};
+
 function isYoutubeUrl(input) {
   return /^https?:\/\/(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)/i.test(
     input.trim()
@@ -123,14 +141,14 @@ function renderResults() {
     if (currentView === 'search') {
       const saveBtn = document.createElement('button');
       saveBtn.className = 'save-btn';
-      saveBtn.textContent = '☆';
+      saveBtn.innerHTML = ICONS.star;
       saveBtn.title = 'Save to playlist';
       saveBtn.addEventListener('click', () => saveToPlaylist(item, saveBtn));
       actions.appendChild(saveBtn);
     } else {
       const removeBtn = document.createElement('button');
       removeBtn.className = 'save-btn';
-      removeBtn.textContent = '🗑';
+      removeBtn.innerHTML = ICONS.trash;
       removeBtn.title = 'Remove from playlist';
       removeBtn.addEventListener('click', () => removeFromPlaylist(item.webpage_url, removeBtn));
       actions.appendChild(removeBtn);
@@ -372,7 +390,7 @@ async function saveToPlaylist(item, triggerBtn) {
       playlists = data.playlists;
       currentPlaylistName = name;
       if (triggerBtn) {
-        triggerBtn.textContent = '★';
+        triggerBtn.innerHTML = ICONS.starFilled;
       }
     } else {
       showError(data.message || 'Save failed');
@@ -661,7 +679,7 @@ let lastKnownIsPlaying = false;
 function applyPlayerState(player, queue) {
   lastKnownIsPlaying = player.isPlaying;
 
-  document.getElementById('play-pause-btn').textContent = player.isPlaying ? '⏸' : '▶';
+  document.getElementById('play-pause-btn').innerHTML = player.isPlaying ? ICONS.pause : ICONS.play;
   document.getElementById('disc').classList.toggle('spinning', player.isPlaying);
 
   const badgeEl = document.getElementById('status-badge');
@@ -689,7 +707,7 @@ let lastNonZeroVolume = 50;
 function reflectVolumeUI(volume) {
   document.getElementById('volume-slider').value = volume;
   document.getElementById('volume-value').textContent = `${volume}%`;
-  document.getElementById('volume-mute-btn').textContent = volume > 0 ? '🔊' : '🔇';
+  document.getElementById('volume-mute-btn').innerHTML = volume > 0 ? ICONS.volume : ICONS.muted;
   if (volume > 0) {
     lastNonZeroVolume = volume;
   }
@@ -897,7 +915,7 @@ if (typeof document !== 'undefined') {
 
   document.getElementById('volume-slider').addEventListener('input', (event) => {
     document.getElementById('volume-value').textContent = `${event.target.value}%`;
-    document.getElementById('volume-mute-btn').textContent = Number(event.target.value) > 0 ? '🔊' : '🔇';
+    document.getElementById('volume-mute-btn').innerHTML = Number(event.target.value) > 0 ? ICONS.volume : ICONS.muted;
   });
 
   document.getElementById('volume-slider').addEventListener('change', (event) => {
@@ -926,13 +944,13 @@ if (typeof document !== 'undefined') {
       audio.muted = true;
       audio.play().catch(() => showError('Could not start browser audio stream'));
       streamStarted = true;
-      btn.textContent = '🔇';
+      btn.innerHTML = ICONS.muted;
       btn.classList.remove('active');
       return;
     }
 
     audio.muted = !audio.muted;
-    btn.textContent = audio.muted ? '🔇' : '🔊';
+    btn.innerHTML = audio.muted ? ICONS.muted : ICONS.volume;
     btn.classList.toggle('active', !audio.muted);
   });
 

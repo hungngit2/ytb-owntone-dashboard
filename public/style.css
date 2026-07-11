@@ -14,6 +14,18 @@
   box-sizing: border-box;
 }
 
+/* Inline SVGs instead of emoji for every icon button — emoji render as a
+   different glyph per OS/browser (Windows vs Android vs iOS emoji sets),
+   which was reported as inconsistent; SVG paths render pixel-identical
+   everywhere. Sized off font-size (1em) so each button's existing
+   font-size rule still controls icon size without extra overrides. */
+button svg {
+  width: 1em;
+  height: 1em;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
 html, body {
   margin: 0;
   height: 100%;
@@ -513,6 +525,10 @@ body {
   border-radius: 8px;
   cursor: pointer;
   font-size: 12px;
+}
+
+#play-all-btn svg {
+  margin-right: 4px;
 }
 
 /* ---- Results ---- */
