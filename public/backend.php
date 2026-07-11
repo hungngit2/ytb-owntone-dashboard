@@ -1,7 +1,12 @@
 <?php
 
 define('OWNTONE_BASE', 'http://127.0.0.1:3689');
-define('YOUTUBE_FIFO_PATH', '/opt/docker/owntone/pipes/youtube.fifo');
+// Deliberately NOT under /opt/docker/owntone/pipes: that path traverses
+// /mnt/appsrv/docker, whose permissions have been observed to reset to
+// block "other" access (likely on container/compose recreation), silently
+// breaking www-data's ability to write here. This path is owned by
+// www-data directly with a clean, non-restrictive traversal chain.
+define('YOUTUBE_FIFO_PATH', '/mnt/appsrv/ytb-pipes/youtube.fifo');
 define('YOUTUBE_FIFO_MATCH', 'youtube');
 // Path as OwnTone sees it inside its container/library config — distinct from
 // YOUTUBE_FIFO_PATH, which is the host path used to write the audio stream.
