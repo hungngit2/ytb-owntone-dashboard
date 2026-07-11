@@ -27,7 +27,18 @@ piping audio into a named pipe.
   per-second heartbeat).
 - A "Playlist" tab supports multiple **named** playlists: create one, add
   search results to an existing or new one, remove items, and "Play All"
-  (which starts the first item; Prev/Next then step through it).
+  (which starts the first item; Prev/Next then step through it). The
+  currently-playing row is highlighted, matched by YouTube video id (not a
+  raw URL string, since the same video can appear as `watch?v=`, `youtu.be/`,
+  or with extra query params depending on where it came from).
+- **Auto-play-next survives the browser being closed.** Playing anything
+  persists the whole list + starting index server-side
+  (`queue_state.json`), and a separate always-running process,
+  `bin/queue-daemon.php` (see Setup), polls OwnTone every 2s and starts the
+  next item itself once the current one actually finishes — no browser tab
+  needs to stay open for this to work. A shuffle toggle changes what
+  "next" means (random, never repeating the current item) and can be
+  flipped mid-playlist without interrupting what's currently playing.
 - The last search and all playlists are cached server-side (as JSON files)
   so a page refresh or a different browser sees the same thing.
 
@@ -47,13 +58,17 @@ piping audio into a named pipe.
 ```
 public/   web root — point your vhost's DocumentRoot here
   index.php            page shell
-  backend.php          play/playlist/cache API (POST action=...)
+  backend.php          play/playlist/queue/cache API (POST action=...)
   app.js               vanilla JS: search, playback, playlists, OwnTone sync
   style.css            dark-mode layout
   config.js            YouTube API key (gitignored — you create this)
   config.example.js     ^ template for the above, committed
+bin/
+  queue-daemon.php      standalone process: polls OwnTone, auto-advances the queue
+docs/
+  queue-daemon.service  systemd unit for bin/queue-daemon.php
+  (design spec and implementation plan)
 tests/    PHP/Node unit tests for the pure/testable logic
-docs/     design spec and implementation plan
 ```
 
 Only `public/` needs to be web-reachable — point your Apache/Nginx vhost's

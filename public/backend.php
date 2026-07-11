@@ -263,7 +263,12 @@ function queue_should_advance(array $player, int $currentIndex, int $itemCount):
     $progressMs = (int) ($player['item_progress_ms'] ?? 0);
     $lengthMs = (int) ($player['item_length_ms'] ?? 0);
 
-    return !$isPlaying && $lengthMs > 0 && $progressMs >= ($lengthMs - 1000);
+    // 4s tolerance, not 1s: our reported duration comes from yt-dlp's
+    // rounded-to-the-second estimate, and the actual decoded/streamed audio
+    // routinely ends a couple of seconds short of it (observed ~2.2s gap in
+    // practice) — a tight window left finished tracks stuck forever, never
+    // satisfying "near the end".
+    return !$isPlaying && $lengthMs > 0 && $progressMs >= ($lengthMs - 4000);
 }
 
 // Pure: which index plays next. Sequential mode stops at the end (returns
@@ -549,6 +554,8 @@ if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
         );
     } elseif ($action === 'set_shuffle') {
         handle_set_shuffle((bool) ($_POST['shuffle'] ?? false));
+    } elseif ($action === 'queue_state') {
+        echo json_encode(load_queue_state());
     } elseif ($action === 'playlists_list') {
         handle_playlists_list();
     } elseif ($action === 'playlist_create') {

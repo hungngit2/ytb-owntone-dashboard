@@ -23,7 +23,7 @@
         </div>
 
         <div class="hero-top-right">
-          <button id="shuffle-btn" aria-label="Shuffle" title="Phát ngẫu nhiên">🔀</button>
+          <button id="shuffle-btn" aria-label="Shuffle" title="Shuffle">🔀</button>
           <span id="status-badge">IDLE</span>
           <span id="ws-status" title="OwnTone connection status">●</span>
         </div>
@@ -45,13 +45,13 @@
 
       <div class="hero-panel">
         <form id="search-form">
-          <input id="search-input" type="text" placeholder="Tìm bài hát..." autocomplete="off">
+          <input id="search-input" type="text" placeholder="Search or paste a YouTube link..." autocomplete="off">
           <button id="search-btn" type="submit" aria-label="Search">🔍</button>
         </form>
 
         <div id="volume-row">
           <div class="volume-label-row">
-            <span>🔊 Âm lượng</span>
+            <span>🔊 Volume</span>
             <span id="volume-value">50%</span>
           </div>
           <input id="volume-slider" type="range" min="0" max="100" value="50">
@@ -67,10 +67,10 @@
     <div id="playlist-controls" style="display: none;">
       <div id="playlist-selector"></div>
       <div id="playlist-new-row">
-        <input id="new-playlist-name" type="text" placeholder="Tên playlist mới...">
-        <button id="create-playlist-btn" type="button">+ Tạo</button>
+        <input id="new-playlist-name" type="text" placeholder="New playlist name...">
+        <button id="create-playlist-btn" type="button">+ Create</button>
       </div>
-      <button id="play-all-btn" type="button">▶ Phát tất cả</button>
+      <button id="play-all-btn" type="button">▶ Play All</button>
     </div>
 
     <div id="results-container">

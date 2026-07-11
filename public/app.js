@@ -65,7 +65,7 @@ function renderResults() {
     const emptyEl = document.createElement('div');
     emptyEl.className = 'results-empty';
     emptyEl.textContent =
-      currentView === 'search' ? 'Chưa có kết quả tìm kiếm.' : 'Playlist trống — lưu bài hát từ kết quả tìm kiếm.';
+      currentView === 'search' ? 'No search results yet.' : 'Playlist is empty — save songs from search results.';
     list.appendChild(emptyEl);
     return;
   }
@@ -75,7 +75,7 @@ function renderResults() {
     row.className = 'result-row';
     row.dataset.url = item.webpage_url;
     row.dataset.videoId = extractYoutubeVideoId(item.webpage_url) || '';
-    if (row.dataset.videoId && row.dataset.videoId === extractYoutubeVideoId(currentTrackInfo.webpageUrl)) {
+    if (row.dataset.videoId && row.dataset.videoId === nowPlayingVideoId()) {
       row.classList.add('playing');
     }
 
@@ -114,14 +114,14 @@ function renderResults() {
       const saveBtn = document.createElement('button');
       saveBtn.className = 'save-btn';
       saveBtn.textContent = '☆';
-      saveBtn.title = 'Lưu vào playlist';
+      saveBtn.title = 'Save to playlist';
       saveBtn.addEventListener('click', () => saveToPlaylist(item, saveBtn));
       actions.appendChild(saveBtn);
     } else {
       const removeBtn = document.createElement('button');
       removeBtn.className = 'save-btn';
       removeBtn.textContent = '🗑';
-      removeBtn.title = 'Xóa khỏi playlist';
+      removeBtn.title = 'Remove from playlist';
       removeBtn.addEventListener('click', () => removeFromPlaylist(item.webpage_url, removeBtn));
       actions.appendChild(removeBtn);
     }
@@ -200,7 +200,7 @@ function cacheLastSearch(results) {
 
 async function runSearch(query) {
   setActiveTab('search');
-  showLoading('Đang tìm kiếm...');
+  showLoading('Searching...');
 
   try {
     searchResults = await searchYouTube(query);
@@ -327,9 +327,9 @@ function promptForPlaylistName() {
   const existingNames = playlists.map((p) => p.name).join(', ');
   const message =
     playlists.length > 0
-      ? `Lưu vào playlist nào? (có sẵn: ${existingNames})\nNhập tên khác để tạo playlist mới.`
-      : 'Tên playlist mới:';
-  const suggestion = currentPlaylistName || (playlists[0] && playlists[0].name) || 'Yêu thích';
+      ? `Save to which playlist? (existing: ${existingNames})\nEnter a different name to create a new one.`
+      : 'New playlist name:';
+  const suggestion = currentPlaylistName || (playlists[0] && playlists[0].name) || 'Favorites';
   return (window.prompt(message, suggestion) || '').trim();
 }
 
@@ -458,6 +458,29 @@ function owntoneBase() {
 
 let currentTrackInfo = { title: null, thumbnail: null, channel: null, webpageUrl: null };
 
+// The authoritative "what's playing" record, mirrored from
+// QUEUE_STATE_FILE on the server. Local-only state (currentTrackInfo) goes
+// stale the moment the page is refreshed or bin/queue-daemon.php advances
+// the track on its own (no browser involved) — this is what keeps
+// highlight/prev/next correct in both cases.
+let serverQueue = { items: [], current_index: -1, shuffle: false };
+
+async function syncServerQueue() {
+  try {
+    const res = await fetch('backend.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'action=queue_state',
+    });
+    serverQueue = await res.json();
+    shuffleEnabled = Boolean(serverQueue.shuffle);
+    document.getElementById('shuffle-btn').classList.toggle('active', shuffleEnabled);
+    updatePlayingHighlight();
+  } catch (err) {
+    // Non-fatal: local currentTrackInfo still covers this tab's own plays.
+  }
+}
+
 // OwnTone's queue title is the raw pipe filename ("youtube.fifo") whenever
 // our metadata hasn't (yet, or ever) reached it — e.g. right after a fresh
 // page load before any play action in this session. Not something to show
@@ -470,7 +493,7 @@ function renderNowPlaying(fallbackTitle) {
   const titleEl = document.getElementById('now-title');
   titleEl.classList.remove('loading');
   const displayFallback = isRawFifoFilename(fallbackTitle) ? '' : fallbackTitle;
-  titleEl.textContent = currentTrackInfo.title || displayFallback || 'Chưa phát bài nào';
+  titleEl.textContent = currentTrackInfo.title || displayFallback || 'Nothing playing';
 
   document.getElementById('now-subtitle').textContent = currentTrackInfo.channel || '';
 
@@ -499,25 +522,36 @@ function renderNowPlaying(fallbackTitle) {
   updatePlayingHighlight();
 }
 
+// The video actually playing right now, per the server's queue state — not
+// per this tab's own memory, so it stays correct across refreshes and
+// daemon-driven auto-advances.
+function nowPlayingVideoId() {
+  const item = serverQueue.items[serverQueue.current_index];
+  return item ? extractYoutubeVideoId(item.webpage_url) : null;
+}
+
 function updatePlayingHighlight() {
-  const playingVideoId = extractYoutubeVideoId(currentTrackInfo.webpageUrl);
+  const playingVideoId = nowPlayingVideoId();
   document.querySelectorAll('.result-row').forEach((row) => {
     row.classList.toggle('playing', Boolean(playingVideoId) && row.dataset.videoId === playingVideoId);
   });
 }
 
 function currentPlayingIndex() {
-  const playingVideoId = extractYoutubeVideoId(currentTrackInfo.webpageUrl);
+  const playingVideoId = nowPlayingVideoId();
   if (!playingVideoId) {
     return -1;
   }
   return activeItems().findIndex((item) => extractYoutubeVideoId(item.webpage_url) === playingVideoId);
 }
 
+// Prev/Next step through the server's queue directly (not the currently
+// displayed search/playlist view) — that's the actual list bin/queue-daemon.php
+// is advancing through, so this is what stays consistent with it.
 function playRelative(offset) {
-  const items = activeItems();
-  const index = currentPlayingIndex();
-  if (index === -1) {
+  const items = serverQueue.items;
+  const index = serverQueue.current_index;
+  if (index < 0 || items.length === 0) {
     return;
   }
 
@@ -543,7 +577,7 @@ async function playQueueItem(items, index, triggerBtn) {
 
   const titleEl = document.getElementById('now-title');
   titleEl.classList.add('loading');
-  titleEl.textContent = 'Đang tải...';
+  titleEl.textContent = 'Loading...';
   document.getElementById('disc').classList.add('loading');
 
   try {
@@ -571,6 +605,9 @@ async function playQueueItem(items, index, triggerBtn) {
       channel: data.channel || null,
       webpageUrl: items[index].webpage_url,
     };
+    // Set immediately rather than waiting for the next websocket sync, so
+    // highlight/prev/next reflect this play right away.
+    serverQueue = { items, current_index: index, shuffle: shuffleEnabled };
     renderNowPlaying();
     document.getElementById('search-input').value = '';
   } catch (err) {
@@ -658,6 +695,10 @@ async function refreshPlayerState() {
       fetch(`${owntoneBase()}/api/queue`).then((r) => r.json()),
     ]);
     applyPlayerState(mapPlayerResponse(player), mapQueueResponse(queue, player.item_id));
+    // Piggybacks on the websocket's own event cadence (fires on real OwnTone
+    // state changes) to also catch daemon-driven auto-advances, instead of
+    // polling separately.
+    syncServerQueue();
   } catch (err) {
     document.getElementById('ws-status').classList.remove('ws-connected');
   }
