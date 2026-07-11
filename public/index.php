@@ -63,6 +63,15 @@
       <button id="tab-playlist" type="button" class="view-tab">Playlist</button>
     </div>
 
+    <div id="playlist-controls" style="display: none;">
+      <div id="playlist-selector"></div>
+      <div id="playlist-new-row">
+        <input id="new-playlist-name" type="text" placeholder="Tên playlist mới...">
+        <button id="create-playlist-btn" type="button">+ Tạo</button>
+      </div>
+      <button id="play-all-btn" type="button">▶ Phát tất cả</button>
+    </div>
+
     <div id="results-container">
       <div id="results-list"></div>
     </div>
