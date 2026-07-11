@@ -674,11 +674,32 @@ function applyPlayerState(player, queue) {
   // sanitizeVolume) — leave the slider/label showing the last known-good
   // reading rather than a nonsense number.
   if (player.volume !== null) {
-    document.getElementById('volume-slider').value = player.volume;
-    document.getElementById('volume-value').textContent = `${player.volume}%`;
+    reflectVolumeUI(player.volume);
   }
 
   startProgressTicker(player.isPlaying, player.progressSeconds, player.durationSeconds);
+}
+
+// Single place that keeps the slider, label, and mute icon in sync,
+// whichever path changed the volume (websocket sync, dragging the
+// slider, or the mute button) — and remembers the last nonzero level so
+// unmuting restores it instead of guessing a default.
+let lastNonZeroVolume = 50;
+
+function reflectVolumeUI(volume) {
+  document.getElementById('volume-slider').value = volume;
+  document.getElementById('volume-value').textContent = `${volume}%`;
+  document.getElementById('volume-mute-btn').textContent = volume > 0 ? '🔊' : '🔇';
+  if (volume > 0) {
+    lastNonZeroVolume = volume;
+  }
+}
+
+function setVolume(volume) {
+  reflectVolumeUI(volume);
+  fetch(`${owntoneBase()}/api/player/volume?volume=${volume}`, { method: 'PUT' }).catch(() =>
+    document.getElementById('ws-status').classList.remove('ws-connected')
+  );
 }
 
 let progressTickTimer = null;
@@ -876,11 +897,43 @@ if (typeof document !== 'undefined') {
 
   document.getElementById('volume-slider').addEventListener('input', (event) => {
     document.getElementById('volume-value').textContent = `${event.target.value}%`;
+    document.getElementById('volume-mute-btn').textContent = Number(event.target.value) > 0 ? '🔊' : '🔇';
   });
 
   document.getElementById('volume-slider').addEventListener('change', (event) => {
-    fetch(`${owntoneBase()}/api/player/volume?volume=${event.target.value}`, { method: 'PUT' })
-      .catch(() => document.getElementById('ws-status').classList.remove('ws-connected'));
+    setVolume(Number(event.target.value));
+  });
+
+  document.getElementById('volume-mute-btn').addEventListener('click', () => {
+    const current = Number(document.getElementById('volume-slider').value);
+    setVolume(current > 0 ? 0 : lastNonZeroVolume || 50);
+  });
+
+  // Plays OwnTone's own mixed output (http://<host>:3689/stream.mp3)
+  // straight in the browser tab — a separate listening path from whatever
+  // physical outputs OwnTone is configured with, independent of the
+  // pipe/queue playback this app otherwise controls.
+  let streamStarted = false;
+  document.getElementById('stream-btn').addEventListener('click', () => {
+    const audio = document.getElementById('browser-stream-audio');
+    const btn = document.getElementById('stream-btn');
+
+    if (!streamStarted) {
+      // Starts muted by default — the stream connects (so unmuting is
+      // instant with no re-buffering delay) but stays silent until a
+      // second click explicitly opts in to actually hearing it.
+      audio.src = `${owntoneBase()}/stream.mp3`;
+      audio.muted = true;
+      audio.play().catch(() => showError('Could not start browser audio stream'));
+      streamStarted = true;
+      btn.textContent = '🔇';
+      btn.classList.remove('active');
+      return;
+    }
+
+    audio.muted = !audio.muted;
+    btn.textContent = audio.muted ? '🔇' : '🔊';
+    btn.classList.toggle('active', !audio.muted);
   });
 
   connectWebSocket();
