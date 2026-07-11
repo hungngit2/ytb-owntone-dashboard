@@ -78,8 +78,14 @@ function build_pipe_metadata_xml(string $title, string $artist, int $durationSec
     $xml = build_metadata_item('core', 'minm', $title) . build_metadata_item('core', 'asar', $artist);
 
     if ($durationSeconds > 0) {
-        $endSamples = $durationSeconds * 44100;
-        $xml .= build_metadata_item('ssnc', 'prgr', "0/0/{$endSamples}");
+        // OwnTone's parser rejects the whole progress item if any of the
+        // three RTP-timestamp fields parses to exactly zero, so "start"
+        // and "pos" use 1 as a nonzero reference point (still correctly
+        // yields pos_ms=0, i.e. "at the beginning") rather than 0.
+        $start = 1;
+        $pos = 1;
+        $end = $start + ($durationSeconds * 44100);
+        $xml .= build_metadata_item('ssnc', 'prgr', "{$start}/{$pos}/{$end}");
     }
 
     return $xml;
