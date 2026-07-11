@@ -168,6 +168,25 @@ body {
   color: #4ade80;
 }
 
+#shuffle-btn {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 2px;
+  transition: transform 0.15s ease, filter 0.15s ease;
+}
+
+#shuffle-btn:hover {
+  transform: scale(1.1);
+}
+
+#shuffle-btn.active {
+  color: var(--accent);
+  filter: drop-shadow(0 0 4px rgba(99, 102, 241, 0.6));
+}
+
 .hero-controls {
   position: absolute;
   bottom: 34px;

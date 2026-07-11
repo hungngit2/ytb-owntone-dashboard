@@ -17,6 +17,10 @@ define('OWNTONE_PIPE_DIRECTORY', '/srv/music/pipes');
 // web-reachable. Adjust if your document root differs.
 define('PLAYLIST_FILE', '/mnt/appsrv/ytb-data/playlist.json');
 define('LAST_SEARCH_FILE', '/mnt/appsrv/ytb-data/last_search.json');
+// Server-side "what queue/playlist and index are currently playing" state,
+// read by bin/queue-daemon.php so auto-advance-to-next-track works even
+// with no browser open — the daemon is what's watching, not any tab.
+define('QUEUE_STATE_FILE', '/mnt/appsrv/ytb-data/queue_state.json');
 
 function is_youtube_url(string $url): bool
 {
@@ -213,6 +217,85 @@ function save_last_search(array $results, string $path = LAST_SEARCH_FILE): void
     write_json_file($results, $path);
 }
 
+// Queue state is {items: [...], current_index: N, shuffle: bool} — an
+// associative shape, distinct from the flat lists read_json_file/
+// write_json_file expect.
+function load_queue_state(string $path = QUEUE_STATE_FILE): array
+{
+    if (!file_exists($path)) {
+        return ['items' => [], 'current_index' => -1, 'shuffle' => false];
+    }
+
+    $decoded = json_decode((string) file_get_contents($path), true);
+    if (!is_array($decoded) || !isset($decoded['items']) || !is_array($decoded['items'])) {
+        return ['items' => [], 'current_index' => -1, 'shuffle' => false];
+    }
+
+    return [
+        'items' => $decoded['items'],
+        'current_index' => (int) ($decoded['current_index'] ?? -1),
+        'shuffle' => (bool) ($decoded['shuffle'] ?? false),
+    ];
+}
+
+function save_queue_state(array $items, int $currentIndex, bool $shuffle = false, string $path = QUEUE_STATE_FILE): void
+{
+    $dir = dirname($path);
+    if (!is_dir($dir)) {
+        mkdir($dir, 0755, true);
+    }
+
+    file_put_contents($path, json_encode(['items' => $items, 'current_index' => $currentIndex, 'shuffle' => $shuffle]));
+}
+
+// Pure decision: given OwnTone's raw /api/player response, has the current
+// item finished? Rejects a missing/zero item_length_ms (duration lookup
+// failed or hasn't landed yet) rather than guessing — better to not
+// auto-advance than to advance while still mid-playback. Whether there's
+// a valid *next* item is next_queue_index's concern, not this one.
+function queue_should_advance(array $player, int $currentIndex, int $itemCount): bool
+{
+    if ($currentIndex < 0 || $itemCount <= 0) {
+        return false;
+    }
+
+    $isPlaying = ($player['state'] ?? '') === 'play';
+    $progressMs = (int) ($player['item_progress_ms'] ?? 0);
+    $lengthMs = (int) ($player['item_length_ms'] ?? 0);
+
+    return !$isPlaying && $lengthMs > 0 && $progressMs >= ($lengthMs - 1000);
+}
+
+// Pure: which index plays next. Sequential mode stops at the end (returns
+// null). Shuffle mode picks any other index and never runs out — $randomPicker
+// is injectable so tests can verify the "never repeat the current index"
+// behavior deterministically instead of asserting on real randomness.
+function next_queue_index(int $currentIndex, int $itemCount, bool $shuffle, ?callable $randomPicker = null): ?int
+{
+    if ($itemCount <= 0) {
+        return null;
+    }
+
+    if (!$shuffle) {
+        $next = $currentIndex + 1;
+        return $next < $itemCount ? $next : null;
+    }
+
+    if ($itemCount === 1) {
+        return null;
+    }
+
+    $randomPicker = $randomPicker ?? function (int $min, int $max) {
+        return random_int($min, $max);
+    };
+
+    do {
+        $candidate = $randomPicker(0, $itemCount - 1);
+    } while ($candidate === $currentIndex);
+
+    return $candidate;
+}
+
 function handle_playlists_list(): void
 {
     echo json_encode(load_playlist());
@@ -350,12 +433,10 @@ function ensure_metadata_pipe_exists(string $metadataFifoPath): void
     ));
 }
 
-function handle_play(string $url): void
+function play_url(string $url): array
 {
     if (!is_youtube_url($url)) {
-        http_response_code(400);
-        echo json_encode(['status' => 'error', 'message' => 'not a valid YouTube URL']);
-        return;
+        return ['status' => 'error', 'message' => 'not a valid YouTube URL'];
     }
 
     shell_exec('pkill -f yt-dlp 2>/dev/null');
@@ -370,9 +451,7 @@ function handle_play(string $url): void
     $trackId = extract_track_id_from_tracks_json($tracks, YOUTUBE_FIFO_MATCH);
 
     if ($trackId === null) {
-        http_response_code(500);
-        echo json_encode(['status' => 'error', 'message' => 'pipe track not found in OwnTone library']);
-        return;
+        return ['status' => 'error', 'message' => 'pipe track not found in OwnTone library'];
     }
 
     $oembed = fetch_youtube_oembed($url);
@@ -396,13 +475,60 @@ function handle_play(string $url): void
 
     shell_exec(build_play_pipeline_cmd($url, YOUTUBE_FIFO_PATH, $metadataFifoPath, $metadataXml));
 
-    echo json_encode([
+    return [
         'status' => 'ok',
         'track_id' => $trackId,
         'title' => $title ?: null,
         'thumbnail' => $thumbnailUrl ?: null,
         'channel' => $channel ?: null,
-    ]);
+    ];
+}
+
+function handle_play(string $url): void
+{
+    echo json_encode(play_url($url));
+}
+
+function handle_play_queue(array $items, int $index, bool $shuffle): void
+{
+    if ($index < 0 || $index >= count($items) || !is_youtube_url($items[$index]['webpage_url'] ?? '')) {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'message' => 'invalid queue or index']);
+        return;
+    }
+
+    save_queue_state($items, $index, $shuffle);
+
+    echo json_encode(play_url($items[$index]['webpage_url']));
+}
+
+function handle_set_shuffle(bool $shuffle): void
+{
+    $state = load_queue_state();
+    save_queue_state($state['items'], $state['current_index'], $shuffle);
+    echo json_encode(['status' => 'ok']);
+}
+
+// Invoked by bin/queue-daemon.php on a loop — not reachable over HTTP.
+function advance_queue_if_finished(): void
+{
+    $state = load_queue_state();
+    $items = $state['items'];
+    $currentIndex = $state['current_index'];
+    $shuffle = $state['shuffle'];
+
+    if (!queue_should_advance(owntone_get('/api/player'), $currentIndex, count($items))) {
+        return;
+    }
+
+    $nextIndex = next_queue_index($currentIndex, count($items), $shuffle);
+    if ($nextIndex === null) {
+        save_queue_state([], -1, false);
+        return;
+    }
+
+    save_queue_state($items, $nextIndex, $shuffle);
+    play_url($items[$nextIndex]['webpage_url'] ?? '');
 }
 
 if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
@@ -414,6 +540,15 @@ if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
         handle_cache_search(is_array($results) ? $results : []);
     } elseif ($action === 'play') {
         handle_play((string) ($_POST['url'] ?? ''));
+    } elseif ($action === 'play_queue') {
+        $items = json_decode((string) ($_POST['items'] ?? '[]'), true);
+        handle_play_queue(
+            is_array($items) ? $items : [],
+            (int) ($_POST['index'] ?? -1),
+            (bool) ($_POST['shuffle'] ?? false)
+        );
+    } elseif ($action === 'set_shuffle') {
+        handle_set_shuffle((bool) ($_POST['shuffle'] ?? false));
     } elseif ($action === 'playlists_list') {
         handle_playlists_list();
     } elseif ($action === 'playlist_create') {

@@ -4,6 +4,24 @@ function isYoutubeUrl(input) {
   );
 }
 
+// The same video can appear as youtube.com/watch?v=X, youtu.be/X, or with
+// extra query params depending on whether the URL came from a search
+// result or a pasted link — matching by raw URL string can miss the same
+// video. Extract the actual 11-char video id and match on that instead.
+function extractYoutubeVideoId(url) {
+  if (!url) {
+    return null;
+  }
+  const patterns = [/[?&]v=([a-zA-Z0-9_-]{11})/, /youtu\.be\/([a-zA-Z0-9_-]{11})/, /youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/];
+  for (const pattern of patterns) {
+    const match = pattern.exec(url);
+    if (match) {
+      return match[1];
+    }
+  }
+  return null;
+}
+
 function mapPlayerResponse(player) {
   return {
     isPlaying: player.state === 'play',
@@ -21,7 +39,7 @@ function mapQueueResponse(queue, currentItemId) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { isYoutubeUrl, mapPlayerResponse, mapQueueResponse };
+  module.exports = { isYoutubeUrl, extractYoutubeVideoId, mapPlayerResponse, mapQueueResponse };
 }
 
 let searchResults = [];
@@ -52,11 +70,12 @@ function renderResults() {
     return;
   }
 
-  items.forEach((item) => {
+  items.forEach((item, index) => {
     const row = document.createElement('div');
     row.className = 'result-row';
     row.dataset.url = item.webpage_url;
-    if (currentTrackInfo.webpageUrl !== null && item.webpage_url === currentTrackInfo.webpageUrl) {
+    row.dataset.videoId = extractYoutubeVideoId(item.webpage_url) || '';
+    if (row.dataset.videoId && row.dataset.videoId === extractYoutubeVideoId(currentTrackInfo.webpageUrl)) {
       row.classList.add('playing');
     }
 
@@ -237,7 +256,7 @@ function switchView(view) {
 function playAll() {
   const items = activeItems();
   if (items.length > 0) {
-    playFromBackend(items[0].webpage_url);
+    playQueueItem(items, 0);
   }
 }
 
@@ -481,13 +500,18 @@ function renderNowPlaying(fallbackTitle) {
 }
 
 function updatePlayingHighlight() {
+  const playingVideoId = extractYoutubeVideoId(currentTrackInfo.webpageUrl);
   document.querySelectorAll('.result-row').forEach((row) => {
-    row.classList.toggle('playing', currentTrackInfo.webpageUrl !== null && row.dataset.url === currentTrackInfo.webpageUrl);
+    row.classList.toggle('playing', Boolean(playingVideoId) && row.dataset.videoId === playingVideoId);
   });
 }
 
 function currentPlayingIndex() {
-  return activeItems().findIndex((item) => item.webpage_url === currentTrackInfo.webpageUrl);
+  const playingVideoId = extractYoutubeVideoId(currentTrackInfo.webpageUrl);
+  if (!playingVideoId) {
+    return -1;
+  }
+  return activeItems().findIndex((item) => extractYoutubeVideoId(item.webpage_url) === playingVideoId);
 }
 
 function playRelative(offset) {
@@ -502,10 +526,16 @@ function playRelative(offset) {
     return;
   }
 
-  playFromBackend(items[targetIndex].webpage_url);
+  playQueueItem(items, targetIndex);
 }
 
-async function playFromBackend(youtubeUrl, triggerBtn) {
+let shuffleEnabled = false;
+
+// Persists the whole list + starting index server-side (not just a single
+// URL) so bin/queue-daemon.php can advance through it on its own — that's
+// what makes auto-play-next survive the browser being closed, since the
+// daemon (not this tab) is what decides and acts on "did it finish".
+async function playQueueItem(items, index, triggerBtn) {
   if (triggerBtn) {
     triggerBtn.disabled = true;
     triggerBtn.textContent = '...';
@@ -520,7 +550,11 @@ async function playFromBackend(youtubeUrl, triggerBtn) {
     const res = await fetch('backend.php', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `action=play&url=${encodeURIComponent(youtubeUrl)}`,
+      body:
+        'action=play_queue' +
+        `&items=${encodeURIComponent(JSON.stringify(items))}` +
+        `&index=${index}` +
+        `&shuffle=${shuffleEnabled ? '1' : ''}`,
     });
     const data = await res.json();
 
@@ -535,7 +569,7 @@ async function playFromBackend(youtubeUrl, triggerBtn) {
       title: data.title || null,
       thumbnail: data.thumbnail || null,
       channel: data.channel || null,
-      webpageUrl: youtubeUrl,
+      webpageUrl: items[index].webpage_url,
     };
     renderNowPlaying();
     document.getElementById('search-input').value = '';
@@ -695,6 +729,18 @@ if (typeof document !== 'undefined') {
   });
 
   document.getElementById('play-all-btn').addEventListener('click', playAll);
+
+  document.getElementById('shuffle-btn').addEventListener('click', () => {
+    shuffleEnabled = !shuffleEnabled;
+    document.getElementById('shuffle-btn').classList.toggle('active', shuffleEnabled);
+    // Also updates the currently-active daemon queue immediately, not just
+    // the next play action — so toggling mid-playlist takes effect right away.
+    fetch('backend.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `action=set_shuffle&shuffle=${shuffleEnabled ? '1' : ''}`,
+    }).catch(() => {});
+  });
 
   document.getElementById('play-pause-btn').addEventListener('click', () => {
     const endpoint = lastKnownIsPlaying ? 'pause' : 'play';

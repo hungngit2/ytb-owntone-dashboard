@@ -23,6 +23,7 @@
         </div>
 
         <div class="hero-top-right">
+          <button id="shuffle-btn" aria-label="Shuffle" title="Phát ngẫu nhiên">🔀</button>
           <span id="status-badge">IDLE</span>
           <span id="ws-status" title="OwnTone connection status">●</span>
         </div>

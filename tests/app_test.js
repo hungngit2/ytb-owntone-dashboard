@@ -1,10 +1,29 @@
 const assert = require('assert');
-const { isYoutubeUrl, mapPlayerResponse, mapQueueResponse } = require('../public/app.js');
+const { isYoutubeUrl, extractYoutubeVideoId, mapPlayerResponse, mapQueueResponse } = require('../public/app.js');
 
 assert.strictEqual(isYoutubeUrl('https://www.youtube.com/watch?v=abc123'), true, 'accepts watch url');
 assert.strictEqual(isYoutubeUrl('https://youtu.be/abc123'), true, 'accepts short url');
 assert.strictEqual(isYoutubeUrl('lofi hip hop radio'), false, 'rejects plain text');
 assert.strictEqual(isYoutubeUrl('https://vimeo.com/123'), false, 'rejects other domains');
+
+assert.strictEqual(
+  extractYoutubeVideoId('https://www.youtube.com/watch?v=dQw4w9WgXcQ'),
+  'dQw4w9WgXcQ',
+  'extracts id from a watch url'
+);
+assert.strictEqual(extractYoutubeVideoId('https://youtu.be/dQw4w9WgXcQ'), 'dQw4w9WgXcQ', 'extracts id from a short url');
+assert.strictEqual(
+  extractYoutubeVideoId('https://youtube.com/shorts/dQw4w9WgXcQ'),
+  'dQw4w9WgXcQ',
+  'extracts id from a shorts url'
+);
+assert.strictEqual(
+  extractYoutubeVideoId('https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=RDdQw4w9WgXcQ&index=1'),
+  'dQw4w9WgXcQ',
+  'extracts id even with extra query params, so a watch url and a playlist-context url for the same video match'
+);
+assert.strictEqual(extractYoutubeVideoId(null), null, 'returns null for null input');
+assert.strictEqual(extractYoutubeVideoId('not a youtube url'), null, 'returns null when no id pattern matches');
 
 const player = mapPlayerResponse({ state: 'play', item_progress_ms: 15000, item_length_ms: 200000, volume: 42, item_id: 5 });
 assert.deepStrictEqual(player, { isPlaying: true, progressSeconds: 15, durationSeconds: 200, volume: 42, currentItemId: 5 }, 'maps a playing state');
