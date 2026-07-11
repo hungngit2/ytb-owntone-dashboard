@@ -347,11 +347,46 @@ function applyPlayerState(player, queue) {
   document.getElementById('volume-slider').value = player.volume;
   document.getElementById('volume-value').textContent = `${player.volume}%`;
 
-  const pct = player.durationSeconds > 0 ? (player.progressSeconds / player.durationSeconds) * 100 : 0;
-  document.getElementById('progress-fill').style.width = `${pct}%`;
+  startProgressTicker(player.isPlaying, player.progressSeconds, player.durationSeconds);
+}
 
-  document.getElementById('time-current').textContent = formatTime(player.progressSeconds);
-  document.getElementById('time-total').textContent = formatTime(player.durationSeconds);
+let progressTickTimer = null;
+let progressSyncedAtMs = 0;
+let syncedProgressSeconds = 0;
+let syncedDurationSeconds = 0;
+
+// OwnTone's WebSocket only pushes on discrete state changes (play/pause,
+// track change, volume) — not a per-second heartbeat — so relying on it
+// alone leaves the progress bar frozen between events. This interpolates
+// locally between syncs (no extra server polling) and gets corrected back
+// to the authoritative value every time a real sync arrives.
+function startProgressTicker(isPlaying, progressSeconds, durationSeconds) {
+  clearInterval(progressTickTimer);
+  syncedProgressSeconds = progressSeconds;
+  syncedDurationSeconds = durationSeconds;
+  progressSyncedAtMs = Date.now();
+
+  updateProgressDisplay(syncedProgressSeconds, syncedDurationSeconds);
+
+  if (!isPlaying) {
+    return;
+  }
+
+  progressTickTimer = setInterval(() => {
+    const elapsed = (Date.now() - progressSyncedAtMs) / 1000;
+    const displaySeconds =
+      syncedDurationSeconds > 0
+        ? Math.min(syncedProgressSeconds + elapsed, syncedDurationSeconds)
+        : syncedProgressSeconds + elapsed;
+    updateProgressDisplay(displaySeconds, syncedDurationSeconds);
+  }, 1000);
+}
+
+function updateProgressDisplay(progressSeconds, durationSeconds) {
+  const pct = durationSeconds > 0 ? (progressSeconds / durationSeconds) * 100 : 0;
+  document.getElementById('progress-fill').style.width = `${pct}%`;
+  document.getElementById('time-current').textContent = formatTime(Math.floor(progressSeconds));
+  document.getElementById('time-total').textContent = formatTime(durationSeconds);
 }
 
 function formatTime(totalSeconds) {
