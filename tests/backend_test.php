@@ -39,10 +39,20 @@ $cachedPlayCmd = build_play_pipeline_cmd(
     '<item><type>test</type></item>',
     '/mnt/appsrv/ytb-cache/abc12345678.audio'
 );
-assert_true(str_contains($cachedPlayCmd, 'cat ') && str_contains($cachedPlayCmd, 'abc12345678.audio'), 'cached play cmd reads from the cache file instead of yt-dlp');
+assert_true(str_contains($cachedPlayCmd, 'ffmpeg -re -i') && str_contains($cachedPlayCmd, 'abc12345678.audio'), 'cached play cmd reads the cache file directly via ffmpeg -i (not yt-dlp)');
 assert_true(!str_contains($cachedPlayCmd, 'yt-dlp'), 'cached play cmd skips yt-dlp entirely');
-assert_true(str_contains($cachedPlayCmd, 'ffmpeg -re -i pipe:0'), 'cached play cmd still paces playback through ffmpeg -re');
-assert_true(str_contains($cachedPlayCmd, 'rm -f') && substr_count($cachedPlayCmd, 'abc12345678.audio') >= 2, 'cached play cmd deletes the cache file after consuming it');
+assert_true(!str_contains($cachedPlayCmd, '-ss'), 'cached play cmd has no seek offset when startAtSeconds is not given');
+assert_true(!str_contains($cachedPlayCmd, 'rm -f'), 'cached play cmd does not delete the cache file — it stays available for repeat seeking');
+
+$seekPlayCmd = build_play_pipeline_cmd(
+    'https://youtu.be/abc123',
+    '/opt/docker/owntone/pipes/youtube.fifo',
+    '/opt/docker/owntone/pipes/youtube.fifo.metadata',
+    '<item><type>test</type></item>',
+    '/mnt/appsrv/ytb-cache/abc12345678.audio',
+    30
+);
+assert_true(str_contains($seekPlayCmd, 'ffmpeg -re -ss 30 -i'), 'seek play cmd passes -ss before -i for input seeking on the cached file');
 
 assert_true(extract_youtube_video_id('https://www.youtube.com/watch?v=dQw4w9WgXcQ') === 'dQw4w9WgXcQ', 'extracts id from a watch url');
 assert_true(extract_youtube_video_id('https://youtu.be/dQw4w9WgXcQ') === 'dQw4w9WgXcQ', 'extracts id from a short url');
@@ -81,6 +91,9 @@ $metadataXml = build_pipe_metadata_xml('My Title', 'My Artist', 125);
 assert_true(str_contains($metadataXml, base64_encode('My Title')), 'pipe metadata includes the base64 title');
 assert_true(str_contains($metadataXml, base64_encode('My Artist')), 'pipe metadata includes the base64 artist');
 assert_true(str_contains($metadataXml, base64_encode('1/1/' . (1 + 125 * 44100))), 'pipe metadata includes progress with nonzero start/pos and duration converted to samples at 44100Hz');
+
+$seekedMetadataXml = build_pipe_metadata_xml('My Title', 'My Artist', 125, '', 30);
+assert_true(str_contains($seekedMetadataXml, base64_encode('1/' . (1 + 30 * 44100) . '/' . (1 + 125 * 44100))), 'pipe metadata reports a seek target as the current position, not the beginning');
 
 $metadataXmlNoDuration = build_pipe_metadata_xml('My Title', 'My Artist', 0);
 assert_true(!str_contains($metadataXmlNoDuration, bin2hex('prgr')), 'pipe metadata omits progress entirely when duration is unknown (0)');

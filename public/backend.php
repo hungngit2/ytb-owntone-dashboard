@@ -75,19 +75,25 @@ function build_play_pipeline_cmd(
     string $fifoPath,
     string $metadataFifoPath,
     string $metadataXml,
-    ?string $cachedAudioPath = null
+    ?string $cachedAudioPath = null,
+    int $startAtSeconds = 0
 ): string {
     // When a preload already downloaded this track, skip yt-dlp entirely —
     // that's the whole point (removes its resolve+download latency from
     // the critical path of pressing Play/Next). Falls back to the normal
-    // live yt-dlp|ffmpeg pipeline otherwise. The cache file is consumed
-    // once and deleted so a skipped-past preload can't accumulate on disk.
+    // live yt-dlp|ffmpeg pipeline otherwise. ffmpeg reads the cache file
+    // directly (not through "cat") so -ss can seek within it — a live
+    // yt-dlp stream has no random access, only a real file on disk does.
+    // The cache file is intentionally NOT deleted after use here: it stays
+    // available for repeat seeks while this track remains current, and is
+    // garbage-collected by maybe_preload_next once a different track takes over.
     if ($cachedAudioPath !== null) {
+        $seekArgs = $startAtSeconds > 0 ? sprintf('-ss %d ', $startAtSeconds) : '';
         $audioPipeline = sprintf(
-            'cat %s | ffmpeg -re -i pipe:0 -f wav -ar 44100 -ac 2 pipe:1 > %s; rm -f %s',
+            'ffmpeg -re %s-i %s -f wav -ar 44100 -ac 2 pipe:1 > %s',
+            $seekArgs,
             escapeshellarg($cachedAudioPath),
-            escapeshellarg($fifoPath),
-            escapeshellarg($cachedAudioPath)
+            escapeshellarg($fifoPath)
         );
     } else {
         $audioPipeline = sprintf(
@@ -153,17 +159,25 @@ function build_metadata_item(string $typeTag, string $codeTag, string $data): st
     );
 }
 
-function build_pipe_metadata_xml(string $title, string $artist, int $durationSeconds, string $artworkBytes = ''): string
-{
+function build_pipe_metadata_xml(
+    string $title,
+    string $artist,
+    int $durationSeconds,
+    string $artworkBytes = '',
+    int $startAtSeconds = 0
+): string {
     $xml = build_metadata_item('core', 'minm', $title) . build_metadata_item('core', 'asar', $artist);
 
     if ($durationSeconds > 0) {
         // OwnTone's parser rejects the whole progress item if any of the
         // three RTP-timestamp fields parses to exactly zero, so "start"
-        // and "pos" use 1 as a nonzero reference point (still correctly
-        // yields pos_ms=0, i.e. "at the beginning") rather than 0.
+        // uses 1 as a nonzero reference point rather than 0. "pos" reports
+        // $startAtSeconds as the current position — this is what makes a
+        // seek show up correctly in OwnTone's own UI even though the
+        // underlying pipe always restarts fresh from byte 0 of whatever
+        // was seeked to in the source file.
         $start = 1;
-        $pos = 1;
+        $pos = $start + ($startAtSeconds * 44100);
         $end = $start + ($durationSeconds * 44100);
         $xml .= build_metadata_item('ssnc', 'prgr', "{$start}/{$pos}/{$end}");
     }
@@ -525,10 +539,21 @@ function ensure_metadata_pipe_exists(string $metadataFifoPath): void
     ));
 }
 
-function play_url(string $url): array
+function play_url(string $url, int $startAtSeconds = 0): array
 {
     if (!is_youtube_url($url)) {
         return ['status' => 'error', 'message' => 'not a valid YouTube URL'];
+    }
+
+    // If maybe_preload_next()/ensure_current_track_cached() already fetched
+    // this exact track, skip yt-dlp's resolve+download step entirely —
+    // that's the delay preloading exists to remove. Seeking additionally
+    // *requires* the cache: a live yt-dlp stream has no random access.
+    $cachePath = audio_cache_path($url);
+    $cachedAudioPath = ($cachePath !== null && file_exists($cachePath)) ? $cachePath : null;
+
+    if ($startAtSeconds > 0 && $cachedAudioPath === null) {
+        return ['status' => 'error', 'message' => 'seek not ready yet — track is not fully cached'];
     }
 
     shell_exec('pkill -f yt-dlp 2>/dev/null');
@@ -563,15 +588,16 @@ function play_url(string $url): array
 
     $metadataFifoPath = YOUTUBE_FIFO_PATH . '.metadata';
     ensure_metadata_pipe_exists($metadataFifoPath);
-    $metadataXml = build_pipe_metadata_xml($title, $channel, $durationSeconds, $artworkBytes);
+    $metadataXml = build_pipe_metadata_xml($title, $channel, $durationSeconds, $artworkBytes, $startAtSeconds);
 
-    // If maybe_preload_next() already fetched this exact track while the
-    // previous one was playing, skip yt-dlp's resolve+download step
-    // entirely — that's the delay preloading exists to remove.
-    $cachePath = audio_cache_path($url);
-    $cachedAudioPath = ($cachePath !== null && file_exists($cachePath)) ? $cachePath : null;
+    shell_exec(build_play_pipeline_cmd($url, YOUTUBE_FIFO_PATH, $metadataFifoPath, $metadataXml, $cachedAudioPath, $startAtSeconds));
 
-    shell_exec(build_play_pipeline_cmd($url, YOUTUBE_FIFO_PATH, $metadataFifoPath, $metadataXml, $cachedAudioPath));
+    // Not cached yet (fresh live-streamed play): fetch a full copy in the
+    // background so this track becomes seekable a little while into
+    // playback, without delaying the start of playback itself.
+    if ($cachedAudioPath === null) {
+        ensure_current_track_cached($url);
+    }
 
     return [
         'status' => 'ok',
@@ -587,6 +613,38 @@ function handle_play(string $url): void
     echo json_encode(play_url($url));
 }
 
+function ensure_current_track_cached(string $url): void
+{
+    $cachePath = audio_cache_path($url);
+    if ($cachePath === null || file_exists($cachePath) || file_exists($cachePath . '.part')) {
+        return;
+    }
+    if (!is_dir(AUDIO_CACHE_DIR)) {
+        mkdir(AUDIO_CACHE_DIR, 0755, true);
+    }
+    shell_exec(build_preload_cmd($url, $cachePath));
+}
+
+function handle_seek(int $targetSeconds): void
+{
+    if ($targetSeconds < 0) {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'message' => 'invalid seek position']);
+        return;
+    }
+
+    $state = load_queue_state();
+    $currentIndex = $state['current_index'];
+    if ($currentIndex < 0 || !isset($state['items'][$currentIndex])) {
+        http_response_code(409);
+        echo json_encode(['status' => 'error', 'message' => 'nothing is playing']);
+        return;
+    }
+
+    $url = $state['items'][$currentIndex]['webpage_url'] ?? '';
+    echo json_encode(play_url($url, $targetSeconds));
+}
+
 // Kicks off a background download of the next sequential track so the
 // following Play/Next/auto-advance can skip straight past yt-dlp. Clears
 // any other cached file first, since only one preload is ever wanted at a
@@ -594,34 +652,42 @@ function handle_play(string $url): void
 // on disk forever.
 function maybe_preload_next(array $items, int $currentIndex, bool $shuffle): void
 {
-    $nextUrl = next_preload_target($items, $currentIndex, $shuffle);
-    if ($nextUrl === null) {
-        return;
-    }
-
-    $cachePath = audio_cache_path($nextUrl);
-    if ($cachePath === null || file_exists($cachePath) || file_exists($cachePath . '.part')) {
-        return;
-    }
-
     if (!is_dir(AUDIO_CACHE_DIR)) {
         mkdir(AUDIO_CACHE_DIR, 0755, true);
     }
 
-    // Clear stray files left behind by an abandoned prior preload — but
-    // never the file for what's currently playing: play_url's own pipeline
-    // may have only just started reading it, and this would race deleting
-    // it out from under that still-launching "cat". That file cleans
-    // itself up via its own "rm -f" once playback ends or is skipped.
+    // The current track's cache now persists indefinitely (kept alive for
+    // repeat seeking, see play_url/ensure_current_track_cached) instead of
+    // being deleted right after use, so cleanup has to run on every call,
+    // not just when there's a next track to preload — otherwise a track
+    // that becomes "no longer current" (with nothing next to replace it,
+    // e.g. queue exhausted) would never get its cache cleared.
     $currentUrl = $items[$currentIndex]['webpage_url'] ?? '';
     $currentCachePath = is_youtube_url($currentUrl) ? audio_cache_path($currentUrl) : null;
-    foreach (glob(AUDIO_CACHE_DIR . '/*') ?: [] as $staleFile) {
-        if ($staleFile !== $currentCachePath) {
-            @unlink($staleFile);
+
+    $nextUrl = next_preload_target($items, $currentIndex, $shuffle);
+    $nextCachePath = $nextUrl !== null ? audio_cache_path($nextUrl) : null;
+
+    // Never the current or next track's cache, or their in-flight .part
+    // downloads — anything else is a stray leftover from a track that's
+    // moved on.
+    $keep = array_filter([
+        $currentCachePath,
+        $currentCachePath !== null ? $currentCachePath . '.part' : null,
+        $nextCachePath,
+        $nextCachePath !== null ? $nextCachePath . '.part' : null,
+    ]);
+    foreach (glob(AUDIO_CACHE_DIR . '/*') ?: [] as $file) {
+        if (!in_array($file, $keep, true)) {
+            @unlink($file);
         }
     }
 
-    shell_exec(build_preload_cmd($nextUrl, $cachePath));
+    if ($nextCachePath === null || file_exists($nextCachePath) || file_exists($nextCachePath . '.part')) {
+        return;
+    }
+
+    shell_exec(build_preload_cmd($nextUrl, $nextCachePath));
 }
 
 function handle_play_queue(array $items, int $index, bool $shuffle): void
@@ -659,6 +725,19 @@ function handle_set_shuffle(bool $shuffle): void
     $state = load_queue_state();
     save_queue_state($state['items'], $state['current_index'], $shuffle);
     echo json_encode(['status' => 'ok']);
+}
+
+// Reports whether the currently-playing track is fully cached yet — the
+// frontend uses this to decide whether the progress bar accepts a drag.
+function handle_queue_state(): void
+{
+    $state = load_queue_state();
+    $currentUrl = isset($state['items'][$state['current_index']])
+        ? ($state['items'][$state['current_index']]['webpage_url'] ?? '')
+        : '';
+    $cachePath = $currentUrl !== '' ? audio_cache_path($currentUrl) : null;
+    $state['seekable'] = $cachePath !== null && file_exists($cachePath);
+    echo json_encode($state);
 }
 
 // Invoked by bin/queue-daemon.php on a loop — not reachable over HTTP.
@@ -704,8 +783,10 @@ if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
         handle_set_shuffle((bool) ($_POST['shuffle'] ?? false));
     } elseif ($action === 'stop') {
         handle_stop();
+    } elseif ($action === 'seek') {
+        handle_seek((int) ($_POST['seconds'] ?? -1));
     } elseif ($action === 'queue_state') {
-        echo json_encode(load_queue_state());
+        handle_queue_state();
     } elseif ($action === 'playlists_list') {
         handle_playlists_list();
     } elseif ($action === 'playlist_create') {
