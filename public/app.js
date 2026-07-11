@@ -107,7 +107,7 @@ function renderResults() {
     const playBtn = document.createElement('button');
     playBtn.className = 'play-btn';
     playBtn.textContent = 'Play';
-    playBtn.addEventListener('click', () => playFromBackend(item.webpage_url, playBtn));
+    playBtn.addEventListener('click', () => playQueueItem(items, index, playBtn));
     actions.appendChild(playBtn);
 
     if (currentView === 'search') {
