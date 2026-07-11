@@ -21,6 +21,9 @@ define('LAST_SEARCH_FILE', '/mnt/appsrv/ytb-data/last_search.json');
 // read by bin/queue-daemon.php so auto-advance-to-next-track works even
 // with no browser open — the daemon is what's watching, not any tab.
 define('QUEUE_STATE_FILE', '/mnt/appsrv/ytb-data/queue_state.json');
+// Holds at most one pre-downloaded "next track" audio file at a time (see
+// maybe_preload_next) — outside the web root like the other data paths.
+define('AUDIO_CACHE_DIR', '/mnt/appsrv/ytb-cache');
 
 function is_youtube_url(string $url): bool
 {
@@ -30,13 +33,69 @@ function is_youtube_url(string $url): bool
     );
 }
 
-function build_play_pipeline_cmd(string $youtubeUrl, string $fifoPath, string $metadataFifoPath, string $metadataXml): string
+function extract_youtube_video_id(string $url): ?string
 {
-    $audioPipeline = sprintf(
-        'yt-dlp --no-playlist -f bestaudio -o - %s | ffmpeg -re -i pipe:0 -f wav -ar 44100 -ac 2 pipe:1 > %s',
-        escapeshellarg($youtubeUrl),
-        escapeshellarg($fifoPath)
-    );
+    $patterns = [
+        '/[?&]v=([a-zA-Z0-9_-]{11})/',
+        '#youtu\.be/([a-zA-Z0-9_-]{11})#',
+        '#youtube\.com/shorts/([a-zA-Z0-9_-]{11})#',
+    ];
+    foreach ($patterns as $pattern) {
+        if (preg_match($pattern, $url, $matches)) {
+            return $matches[1];
+        }
+    }
+    return null;
+}
+
+function audio_cache_path(string $youtubeUrl, string $cacheDir = AUDIO_CACHE_DIR): ?string
+{
+    $videoId = extract_youtube_video_id($youtubeUrl);
+    return $videoId !== null ? $cacheDir . '/' . $videoId . '.audio' : null;
+}
+
+// Pure: given the currently-playing queue and index, which url (if any)
+// should be preloaded next? Shuffle has no fixed "next" to preload — the
+// daemon picks it randomly only once the current track actually finishes.
+function next_preload_target(array $items, int $currentIndex, bool $shuffle): ?string
+{
+    if ($shuffle) {
+        return null;
+    }
+    $nextIndex = $currentIndex + 1;
+    if ($nextIndex < 0 || $nextIndex >= count($items)) {
+        return null;
+    }
+    $url = $items[$nextIndex]['webpage_url'] ?? '';
+    return is_youtube_url($url) ? $url : null;
+}
+
+function build_play_pipeline_cmd(
+    string $youtubeUrl,
+    string $fifoPath,
+    string $metadataFifoPath,
+    string $metadataXml,
+    ?string $cachedAudioPath = null
+): string {
+    // When a preload already downloaded this track, skip yt-dlp entirely —
+    // that's the whole point (removes its resolve+download latency from
+    // the critical path of pressing Play/Next). Falls back to the normal
+    // live yt-dlp|ffmpeg pipeline otherwise. The cache file is consumed
+    // once and deleted so a skipped-past preload can't accumulate on disk.
+    if ($cachedAudioPath !== null) {
+        $audioPipeline = sprintf(
+            'cat %s | ffmpeg -re -i pipe:0 -f wav -ar 44100 -ac 2 pipe:1 > %s; rm -f %s',
+            escapeshellarg($cachedAudioPath),
+            escapeshellarg($fifoPath),
+            escapeshellarg($cachedAudioPath)
+        );
+    } else {
+        $audioPipeline = sprintf(
+            'yt-dlp --no-playlist -f bestaudio -o - %s | ffmpeg -re -i pipe:0 -f wav -ar 44100 -ac 2 pipe:1 > %s',
+            escapeshellarg($youtubeUrl),
+            escapeshellarg($fifoPath)
+        );
+    }
 
     // timeout guards against this hanging forever: writing to a named pipe
     // blocks until a reader attaches, and if OwnTone's metadata reader
@@ -53,6 +112,22 @@ function build_play_pipeline_cmd(string $youtubeUrl, string $fifoPath, string $m
     $combined = sprintf('%s & %s', $metadataWrite, $audioPipeline);
 
     return sprintf('nohup sh -c %s > /dev/null 2>&1 &', escapeshellarg($combined));
+}
+
+// Downloads straight to a temp path, then renames into place atomically —
+// so a concurrent play never sees (and uses) a half-written cache file.
+function build_preload_cmd(string $youtubeUrl, string $cachePath): string
+{
+    $tmpPath = $cachePath . '.part';
+    $cmd = sprintf(
+        'yt-dlp --no-playlist -f bestaudio -o %s %s && mv %s %s',
+        escapeshellarg($tmpPath),
+        escapeshellarg($youtubeUrl),
+        escapeshellarg($tmpPath),
+        escapeshellarg($cachePath)
+    );
+
+    return sprintf('nohup sh -c %s > /dev/null 2>&1 &', escapeshellarg($cmd));
 }
 
 function build_yt_dlp_duration_cmd(string $youtubeUrl): string
@@ -478,7 +553,13 @@ function play_url(string $url): array
     ensure_metadata_pipe_exists($metadataFifoPath);
     $metadataXml = build_pipe_metadata_xml($title, $channel, $durationSeconds, $artworkBytes);
 
-    shell_exec(build_play_pipeline_cmd($url, YOUTUBE_FIFO_PATH, $metadataFifoPath, $metadataXml));
+    // If maybe_preload_next() already fetched this exact track while the
+    // previous one was playing, skip yt-dlp's resolve+download step
+    // entirely — that's the delay preloading exists to remove.
+    $cachePath = audio_cache_path($url);
+    $cachedAudioPath = ($cachePath !== null && file_exists($cachePath)) ? $cachePath : null;
+
+    shell_exec(build_play_pipeline_cmd($url, YOUTUBE_FIFO_PATH, $metadataFifoPath, $metadataXml, $cachedAudioPath));
 
     return [
         'status' => 'ok',
@@ -494,6 +575,43 @@ function handle_play(string $url): void
     echo json_encode(play_url($url));
 }
 
+// Kicks off a background download of the next sequential track so the
+// following Play/Next/auto-advance can skip straight past yt-dlp. Clears
+// any other cached file first, since only one preload is ever wanted at a
+// time — otherwise an abandoned preload (user skipped past it) would sit
+// on disk forever.
+function maybe_preload_next(array $items, int $currentIndex, bool $shuffle): void
+{
+    $nextUrl = next_preload_target($items, $currentIndex, $shuffle);
+    if ($nextUrl === null) {
+        return;
+    }
+
+    $cachePath = audio_cache_path($nextUrl);
+    if ($cachePath === null || file_exists($cachePath) || file_exists($cachePath . '.part')) {
+        return;
+    }
+
+    if (!is_dir(AUDIO_CACHE_DIR)) {
+        mkdir(AUDIO_CACHE_DIR, 0755, true);
+    }
+
+    // Clear stray files left behind by an abandoned prior preload — but
+    // never the file for what's currently playing: play_url's own pipeline
+    // may have only just started reading it, and this would race deleting
+    // it out from under that still-launching "cat". That file cleans
+    // itself up via its own "rm -f" once playback ends or is skipped.
+    $currentUrl = $items[$currentIndex]['webpage_url'] ?? '';
+    $currentCachePath = is_youtube_url($currentUrl) ? audio_cache_path($currentUrl) : null;
+    foreach (glob(AUDIO_CACHE_DIR . '/*') ?: [] as $staleFile) {
+        if ($staleFile !== $currentCachePath) {
+            @unlink($staleFile);
+        }
+    }
+
+    shell_exec(build_preload_cmd($nextUrl, $cachePath));
+}
+
 function handle_play_queue(array $items, int $index, bool $shuffle): void
 {
     if ($index < 0 || $index >= count($items) || !is_youtube_url($items[$index]['webpage_url'] ?? '')) {
@@ -504,7 +622,10 @@ function handle_play_queue(array $items, int $index, bool $shuffle): void
 
     save_queue_state($items, $index, $shuffle);
 
-    echo json_encode(play_url($items[$index]['webpage_url']));
+    $result = play_url($items[$index]['webpage_url']);
+    maybe_preload_next($items, $index, $shuffle);
+
+    echo json_encode($result);
 }
 
 function handle_set_shuffle(bool $shuffle): void
@@ -534,6 +655,7 @@ function advance_queue_if_finished(): void
 
     save_queue_state($items, $nextIndex, $shuffle);
     play_url($items[$nextIndex]['webpage_url'] ?? '');
+    maybe_preload_next($items, $nextIndex, $shuffle);
 }
 
 if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
