@@ -43,7 +43,17 @@ function build_play_pipeline_cmd(string $youtubeUrl, string $fifoPath, string $m
         escapeshellarg($fifoPath)
     );
 
-    $metadataWrite = sprintf('printf %s > %s', escapeshellarg($metadataXml), escapeshellarg($metadataFifoPath));
+    // timeout guards against this hanging forever: writing to a named pipe
+    // blocks until a reader attaches, and if OwnTone's metadata reader
+    // doesn't reconnect in time, an untimed write leaks a stuck process on
+    // every play attempt (that process is never matched by the yt-dlp/
+    // ffmpeg cleanup below). Worst case on timeout: this one play's
+    // metadata is silently skipped — audio still plays via the other pipe.
+    $metadataWrite = sprintf(
+        'timeout 5 printf %s > %s',
+        escapeshellarg($metadataXml),
+        escapeshellarg($metadataFifoPath)
+    );
 
     $combined = sprintf('%s & %s', $metadataWrite, $audioPipeline);
 
@@ -321,6 +331,11 @@ function handle_play(string $url): void
 
     shell_exec('pkill -f yt-dlp 2>/dev/null');
     shell_exec('pkill -f ffmpeg 2>/dev/null');
+    // Catches any metadata writer stuck from a prior play attempt before
+    // the timeout guard existed (or before it elapses) — matched on the
+    // fifo path itself, not a generic name, so it can't catch anything
+    // unrelated to this app.
+    shell_exec('pkill -f ' . escapeshellarg(YOUTUBE_FIFO_PATH . '.metadata') . ' 2>/dev/null');
 
     $tracks = owntone_get('/api/library/files?directory=' . rawurlencode(OWNTONE_PIPE_DIRECTORY));
     $trackId = extract_track_id_from_tracks_json($tracks, YOUTUBE_FIFO_MATCH);
