@@ -73,7 +73,7 @@ function build_metadata_item(string $typeTag, string $codeTag, string $data): st
     );
 }
 
-function build_pipe_metadata_xml(string $title, string $artist, int $durationSeconds): string
+function build_pipe_metadata_xml(string $title, string $artist, int $durationSeconds, string $artworkBytes = ''): string
 {
     $xml = build_metadata_item('core', 'minm', $title) . build_metadata_item('core', 'asar', $artist);
 
@@ -86,6 +86,10 @@ function build_pipe_metadata_xml(string $title, string $artist, int $durationSec
         $pos = 1;
         $end = $start + ($durationSeconds * 44100);
         $xml .= build_metadata_item('ssnc', 'prgr', "{$start}/{$pos}/{$end}");
+    }
+
+    if ($artworkBytes !== '') {
+        $xml .= build_metadata_item('ssnc', 'PICT', $artworkBytes);
     }
 
     return $xml;
@@ -267,6 +271,17 @@ function fetch_youtube_oembed(string $url): array
     return is_array($decoded) ? $decoded : [];
 }
 
+function fetch_url_bytes(string $url): string
+{
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+    $data = curl_exec($ch);
+    curl_close($ch);
+
+    return is_string($data) ? $data : '';
+}
+
 function handle_resolve_url(string $url): void
 {
     if (!is_youtube_url($url)) {
@@ -319,7 +334,9 @@ function handle_play(string $url): void
     $oembed = fetch_youtube_oembed($url);
     $title = $oembed['title'] ?? '';
     $channel = $oembed['author_name'] ?? '';
+    $thumbnailUrl = $oembed['thumbnail_url'] ?? '';
     $durationSeconds = (int) round((float) trim((string) shell_exec(build_yt_dlp_duration_cmd($url))));
+    $artworkBytes = $thumbnailUrl !== '' ? fetch_url_bytes($thumbnailUrl) : '';
 
     // Queue + start playback BEFORE launching the pipeline, so the new
     // queue item already exists by the time metadata arrives on the pipe.
@@ -331,7 +348,7 @@ function handle_play(string $url): void
 
     $metadataFifoPath = YOUTUBE_FIFO_PATH . '.metadata';
     ensure_metadata_pipe_exists($metadataFifoPath);
-    $metadataXml = build_pipe_metadata_xml($title, $channel, $durationSeconds);
+    $metadataXml = build_pipe_metadata_xml($title, $channel, $durationSeconds, $artworkBytes);
 
     shell_exec(build_play_pipeline_cmd($url, YOUTUBE_FIFO_PATH, $metadataFifoPath, $metadataXml));
 
@@ -339,7 +356,7 @@ function handle_play(string $url): void
         'status' => 'ok',
         'track_id' => $trackId,
         'title' => $title ?: null,
-        'thumbnail' => $oembed['thumbnail_url'] ?? null,
+        'thumbnail' => $thumbnailUrl ?: null,
         'channel' => $channel ?: null,
     ]);
 }

@@ -58,6 +58,12 @@ assert_true(str_contains($metadataXml, base64_encode('1/1/' . (1 + 125 * 44100))
 
 $metadataXmlNoDuration = build_pipe_metadata_xml('My Title', 'My Artist', 0);
 assert_true(!str_contains($metadataXmlNoDuration, bin2hex('prgr')), 'pipe metadata omits progress entirely when duration is unknown (0)');
+assert_true(!str_contains($metadataXmlNoDuration, bin2hex('PICT')), 'pipe metadata omits artwork entirely when no bytes are given');
+
+$fakeJpegBytes = "\xFF\xD8\xFFfake-jpeg-bytes";
+$metadataXmlWithArt = build_pipe_metadata_xml('My Title', 'My Artist', 125, $fakeJpegBytes);
+assert_true(str_contains($metadataXmlWithArt, '<code>' . bin2hex('PICT') . '</code>'), 'pipe metadata includes a PICT item when artwork bytes are given');
+assert_true(str_contains($metadataXmlWithArt, base64_encode($fakeJpegBytes)), 'pipe metadata base64-encodes the raw artwork bytes');
 
 $fixture = [
     'tracks' => [
