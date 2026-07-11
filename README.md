@@ -96,6 +96,9 @@ Only `public/` needs to be web-reachable — point your Apache/Nginx vhost's
 Set your document root to `public/`, and give `backend.php`'s location its
 own longer `fastcgi_read_timeout` — even without the old `yt-dlp` search
 path, `action=play` still does a duration lookup that can take 10-15s.
+Also add `fastcgi_ignore_client_abort on;` to that same location block —
+see the "Resilience" section below for why this matters (a page reload
+can otherwise cut a play/stop/seek request short mid-lock).
 
 ### 3. `public/backend.php` constants
 
@@ -290,6 +293,28 @@ piling up — froze the host a third time. Two more layers close this:
    one)** while any play request is in flight (`playRequestInFlight` in
    `app.js`) — stopping the burst of concurrent requests at the source,
    rather than relying on the backend to absorb it after the fact.
+
+Even with all of the above, one more gap let a **reload-then-click-Play
+loop bypass the lock entirely**: reloading the page aborts the browser's
+HTTP connection for whatever request was in flight, and by default both
+PHP and nginx terminate the server-side request early on a client
+disconnect — releasing the flock (and skipping `stop_existing_pipeline()`'s
+cleanup) before the operation actually finished, letting a fresh reload
+immediately fire another request into what looked like an unlocked state.
+Confirmed live and fixed with two settings that need to agree:
+
+6. **`ignore_user_abort(true)`** at the top of `backend.php` — tells PHP
+   to keep running the script to completion regardless of whether the
+   client is still there to receive the response (the actual side effect
+   — playing/stopping/seeking — has nothing to do with that).
+7. **`fastcgi_ignore_client_abort on;`** in nginx's `location = /ytb/backend.php`
+   block — without this, nginx itself tears down the FastCGI request to
+   PHP-FPM on client disconnect independently of PHP's own setting, so (6)
+   alone isn't sufficient. Verified live: force-killed a curl client 1s
+   into a play request (simulating a reload) and confirmed via `fuser
+   playback.lock` that the PHP-FPM worker kept running and holding the
+   lock for the full ~18s the operation actually took, with a second
+   concurrent request correctly blocking on it rather than sailing through.
 
 ## Tests
 

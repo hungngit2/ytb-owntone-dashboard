@@ -1,5 +1,16 @@
 <?php
 
+// Reloading the page mid-request aborts that HTTP connection — without
+// this, PHP can terminate the script early on client disconnect, which
+// can release the playback flock (see PLAYBACK_LOCK_FILE) and skip its
+// cleanup before stop_existing_pipeline()/the new pipeline launch actually
+// finish. That let a reload-then-click-Play cycle bypass the lock
+// entirely and repeat indefinitely (confirmed live). The operation's real
+// side effect (playing/stopping/seeking) has nothing to do with whether
+// the browser stuck around to receive the response, so it should always
+// run to completion regardless.
+ignore_user_abort(true);
+
 define('OWNTONE_BASE', 'http://127.0.0.1:3689');
 // All host-side app state lives under one parent directory now (pipes/
 // data/cache subfolders), outside nginx's document root and deliberately
