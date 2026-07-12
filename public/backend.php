@@ -88,12 +88,18 @@ function audio_cache_path(string $youtubeUrl, string $cacheDir = AUDIO_CACHE_DIR
 // Pure: given the currently-playing queue and index, which url (if any)
 // should be preloaded next? Shuffle has no fixed "next" to preload — the
 // daemon picks it randomly only once the current track actually finishes.
-function next_preload_target(array $items, int $currentIndex, bool $shuffle): ?string
+// Repeat-one has nothing new to preload either: "next" is the same track
+// that's already playing (and therefore already cached). Repeat-all wraps
+// back to the first item once past the end, same as playback itself will.
+function next_preload_target(array $items, int $currentIndex, bool $shuffle, string $repeat = 'off'): ?string
 {
-    if ($shuffle) {
+    if ($shuffle || $repeat === 'one') {
         return null;
     }
     $nextIndex = $currentIndex + 1;
+    if ($nextIndex >= count($items)) {
+        $nextIndex = $repeat === 'all' ? 0 : $nextIndex;
+    }
     if ($nextIndex < 0 || $nextIndex >= count($items)) {
         return null;
     }
@@ -337,35 +343,41 @@ function save_last_search(array $results, string $path = LAST_SEARCH_FILE): void
     write_json_file($results, $path);
 }
 
-// Queue state is {items: [...], current_index: N, shuffle: bool} — an
-// associative shape, distinct from the flat lists read_json_file/
-// write_json_file expect.
+// Queue state is {items: [...], current_index: N, shuffle: bool, repeat:
+// 'off'|'all'|'one'} — an associative shape, distinct from the flat lists
+// read_json_file/write_json_file expect.
 function load_queue_state(string $path = QUEUE_STATE_FILE): array
 {
     if (!file_exists($path)) {
-        return ['items' => [], 'current_index' => -1, 'shuffle' => false];
+        return ['items' => [], 'current_index' => -1, 'shuffle' => false, 'repeat' => 'off'];
     }
 
     $decoded = json_decode((string) file_get_contents($path), true);
     if (!is_array($decoded) || !isset($decoded['items']) || !is_array($decoded['items'])) {
-        return ['items' => [], 'current_index' => -1, 'shuffle' => false];
+        return ['items' => [], 'current_index' => -1, 'shuffle' => false, 'repeat' => 'off'];
+    }
+
+    $repeat = $decoded['repeat'] ?? 'off';
+    if (!in_array($repeat, ['off', 'all', 'one'], true)) {
+        $repeat = 'off';
     }
 
     return [
         'items' => $decoded['items'],
         'current_index' => (int) ($decoded['current_index'] ?? -1),
         'shuffle' => (bool) ($decoded['shuffle'] ?? false),
+        'repeat' => $repeat,
     ];
 }
 
-function save_queue_state(array $items, int $currentIndex, bool $shuffle = false, string $path = QUEUE_STATE_FILE): void
+function save_queue_state(array $items, int $currentIndex, bool $shuffle = false, string $repeat = 'off', string $path = QUEUE_STATE_FILE): void
 {
     $dir = dirname($path);
     if (!is_dir($dir)) {
         mkdir($dir, 0755, true);
     }
 
-    file_put_contents($path, json_encode(['items' => $items, 'current_index' => $currentIndex, 'shuffle' => $shuffle]));
+    file_put_contents($path, json_encode(['items' => $items, 'current_index' => $currentIndex, 'shuffle' => $shuffle, 'repeat' => $repeat]));
 }
 
 // Pure decision: given OwnTone's raw /api/player response, has the current
@@ -395,19 +407,28 @@ function queue_should_advance(array $player, int $currentIndex, int $itemCount):
 // null). Shuffle mode picks any other index and never runs out — $randomPicker
 // is injectable so tests can verify the "never repeat the current index"
 // behavior deterministically instead of asserting on real randomness.
-function next_queue_index(int $currentIndex, int $itemCount, bool $shuffle, ?callable $randomPicker = null): ?int
+function next_queue_index(int $currentIndex, int $itemCount, bool $shuffle, string $repeat = 'off', ?callable $randomPicker = null): ?int
 {
     if ($itemCount <= 0) {
         return null;
     }
 
+    // Repeat-one always replays the same track regardless of shuffle —
+    // there's no "next" to pick, sequential or otherwise.
+    if ($repeat === 'one') {
+        return $currentIndex;
+    }
+
     if (!$shuffle) {
         $next = $currentIndex + 1;
-        return $next < $itemCount ? $next : null;
+        if ($next < $itemCount) {
+            return $next;
+        }
+        return $repeat === 'all' ? 0 : null;
     }
 
     if ($itemCount === 1) {
-        return null;
+        return $repeat === 'all' ? 0 : null;
     }
 
     $randomPicker = $randomPicker ?? function (int $min, int $max) {
@@ -770,7 +791,7 @@ function handle_seek(int $targetSeconds): void
 // any other cached file first, since only one preload is ever wanted at a
 // time — otherwise an abandoned preload (user skipped past it) would sit
 // on disk forever.
-function maybe_preload_next(array $items, int $currentIndex, bool $shuffle): void
+function maybe_preload_next(array $items, int $currentIndex, bool $shuffle, string $repeat = 'off'): void
 {
     if (!is_dir(AUDIO_CACHE_DIR)) {
         mkdir(AUDIO_CACHE_DIR, 0755, true);
@@ -785,7 +806,7 @@ function maybe_preload_next(array $items, int $currentIndex, bool $shuffle): voi
     $currentUrl = $items[$currentIndex]['webpage_url'] ?? '';
     $currentCachePath = is_youtube_url($currentUrl) ? audio_cache_path($currentUrl) : null;
 
-    $nextUrl = next_preload_target($items, $currentIndex, $shuffle);
+    $nextUrl = next_preload_target($items, $currentIndex, $shuffle, $repeat);
     $nextCachePath = $nextUrl !== null ? audio_cache_path($nextUrl) : null;
 
     // Never the current or next track's cache, or their in-flight .part
@@ -817,18 +838,22 @@ function maybe_preload_next(array $items, int $currentIndex, bool $shuffle): voi
     shell_exec(build_preload_cmd($nextUrl, $nextCachePath));
 }
 
-function handle_play_queue(array $items, int $index, bool $shuffle): void
+function handle_play_queue(array $items, int $index, bool $shuffle, string $repeat = 'off'): void
 {
+    if (!in_array($repeat, ['off', 'all', 'one'], true)) {
+        $repeat = 'off';
+    }
+
     if ($index < 0 || $index >= count($items) || !is_youtube_url($items[$index]['webpage_url'] ?? '')) {
         http_response_code(400);
         echo json_encode(['status' => 'error', 'message' => 'invalid queue or index']);
         return;
     }
 
-    save_queue_state($items, $index, $shuffle);
+    save_queue_state($items, $index, $shuffle, $repeat);
 
     $result = play_url($items[$index]['webpage_url']);
-    maybe_preload_next($items, $index, $shuffle);
+    maybe_preload_next($items, $index, $shuffle, $repeat);
 
     echo json_encode($result);
 }
@@ -851,7 +876,19 @@ function handle_stop(): void
 function handle_set_shuffle(bool $shuffle): void
 {
     $state = load_queue_state();
-    save_queue_state($state['items'], $state['current_index'], $shuffle);
+    save_queue_state($state['items'], $state['current_index'], $shuffle, $state['repeat']);
+    echo json_encode(['status' => 'ok']);
+}
+
+function handle_set_repeat(string $repeat): void
+{
+    if (!in_array($repeat, ['off', 'all', 'one'], true)) {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'message' => 'invalid repeat mode']);
+        return;
+    }
+    $state = load_queue_state();
+    save_queue_state($state['items'], $state['current_index'], $state['shuffle'], $repeat);
     echo json_encode(['status' => 'ok']);
 }
 
@@ -875,20 +912,21 @@ function advance_queue_if_finished(): void
     $items = $state['items'];
     $currentIndex = $state['current_index'];
     $shuffle = $state['shuffle'];
+    $repeat = $state['repeat'];
 
     if (!queue_should_advance(owntone_get('/api/player'), $currentIndex, count($items))) {
         return;
     }
 
-    $nextIndex = next_queue_index($currentIndex, count($items), $shuffle);
+    $nextIndex = next_queue_index($currentIndex, count($items), $shuffle, $repeat);
     if ($nextIndex === null) {
         save_queue_state([], -1, false);
         return;
     }
 
-    save_queue_state($items, $nextIndex, $shuffle);
+    save_queue_state($items, $nextIndex, $shuffle, $repeat);
     play_url($items[$nextIndex]['webpage_url'] ?? '');
-    maybe_preload_next($items, $nextIndex, $shuffle);
+    maybe_preload_next($items, $nextIndex, $shuffle, $repeat);
 }
 
 if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
@@ -905,10 +943,13 @@ if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
         handle_play_queue(
             is_array($items) ? $items : [],
             (int) ($_POST['index'] ?? -1),
-            (bool) ($_POST['shuffle'] ?? false)
+            (bool) ($_POST['shuffle'] ?? false),
+            (string) ($_POST['repeat'] ?? 'off')
         );
     } elseif ($action === 'set_shuffle') {
         handle_set_shuffle((bool) ($_POST['shuffle'] ?? false));
+    } elseif ($action === 'set_repeat') {
+        handle_set_repeat((string) ($_POST['repeat'] ?? 'off'));
     } elseif ($action === 'stop') {
         handle_stop();
     } elseif ($action === 'seek') {
