@@ -55,6 +55,18 @@ define('PLAYBACK_LOCK_FILE', '/mnt/appsrv/ytb-owntone/data/playback.lock');
 // that regardless of which code path or how many concurrent requests
 // triggered it.
 define('MAX_CONCURRENT_YTDLP', 2);
+// A bare "ffmpeg" is NOT a safe pkill/pgrep pattern on this host: it also
+// runs Jellyfin, whose own ffmpeg processes (transcoding, thumbnail
+// generation) run continuously and match "ffmpeg" as a plain substring
+// too (e.g. its own launch command embeds "--ffmpeg=/usr/lib/jellyfin-
+// ffmpeg/ffmpeg", and the jellyfin-ffmpeg binary's own argv still
+// contains "ffmpeg") — confirmed live via `ps`. A bare match would kill
+// Jellyfin's unrelated processes on every play/stop/seek, and would make
+// is_pipeline_running() report "still running" almost permanently
+// regardless of our own pipeline's actual state. This exact suffix is
+// unique to our own ffmpeg invocation in build_play_pipeline_cmd (used
+// for both the live-stream and cached-file branches).
+define('OUR_FFMPEG_PATTERN', 'wav -ar 44100 -ac 2 pipe:1');
 
 function is_youtube_url(string $url): bool
 {
@@ -385,22 +397,38 @@ function save_queue_state(array $items, int $currentIndex, bool $shuffle = false
 // failed or hasn't landed yet) rather than guessing — better to not
 // auto-advance than to advance while still mid-playback. Whether there's
 // a valid *next* item is next_queue_index's concern, not this one.
-function queue_should_advance(array $player, int $currentIndex, int $itemCount): bool
+//
+// Two independent signals, either is sufficient once genuinely paused:
+// 1. Progress is within 4s of yt-dlp's reported duration — works for most
+//    videos, where the estimate is close to the real decoded length.
+// 2. Our own ffmpeg pipeline process has already exited on its own —
+//    ffmpeg naturally exits once its input (the yt-dlp stream or the
+//    cached file) reaches EOF, i.e. once the audio genuinely finishes,
+//    regardless of what yt-dlp's duration estimate said. Needed because
+//    some videos' actual audio ends more than the 4s tolerance short of
+//    that estimate (codec/container-dependent) — confirmed live: paused
+//    with several seconds still "remaining" and never advancing, with
+//    signal 1 never triggering because progress never got that close.
+//    Requires progress > 0 so a track that never actually started (pipeline
+//    failed before playing anything) isn't mistaken for "finished".
+function queue_should_advance(array $player, int $currentIndex, int $itemCount, bool $pipelineStillRunning = true): bool
 {
     if ($currentIndex < 0 || $itemCount <= 0) {
         return false;
     }
 
     $isPlaying = ($player['state'] ?? '') === 'play';
+    if ($isPlaying) {
+        return false;
+    }
+
     $progressMs = (int) ($player['item_progress_ms'] ?? 0);
     $lengthMs = (int) ($player['item_length_ms'] ?? 0);
 
-    // 4s tolerance, not 1s: our reported duration comes from yt-dlp's
-    // rounded-to-the-second estimate, and the actual decoded/streamed audio
-    // routinely ends a couple of seconds short of it (observed ~2.2s gap in
-    // practice) — a tight window left finished tracks stuck forever, never
-    // satisfying "near the end".
-    return !$isPlaying && $lengthMs > 0 && $progressMs >= ($lengthMs - 4000);
+    $nearEndByDuration = $lengthMs > 0 && $progressMs >= ($lengthMs - 4000);
+    $pipelineExitedAfterStarting = !$pipelineStillRunning && $progressMs > 0;
+
+    return $nearEndByDuration || $pipelineExitedAfterStarting;
 }
 
 // Pure: which index plays next. Sequential mode stops at the end (returns
@@ -652,10 +680,20 @@ function running_ytdlp_count(): int
     return $output === '' ? 0 : (int) $output;
 }
 
+// ffmpeg is only ever spawned by build_play_pipeline_cmd (the live
+// playback pipeline) — preloading/caching only ever runs yt-dlp, never
+// ffmpeg — so this uniquely identifies "is the current track's audio
+// pipeline still active", used by queue_should_advance as a more reliable
+// finished-signal than yt-dlp's duration estimate alone.
+function is_pipeline_running(): bool
+{
+    return trim((string) shell_exec('pgrep -f ' . escapeshellarg(OUR_FFMPEG_PATTERN) . ' 2>/dev/null')) !== '';
+}
+
 function stop_existing_pipeline(): void
 {
     shell_exec('pkill -f yt-dlp 2>/dev/null');
-    shell_exec('pkill -f ffmpeg 2>/dev/null');
+    shell_exec('pkill -f ' . escapeshellarg(OUR_FFMPEG_PATTERN) . ' 2>/dev/null');
     // Catches any metadata writer stuck from a prior play attempt before
     // the timeout guard existed (or before it elapses) — matched on the
     // fifo path itself, not a generic name, so it can't catch anything
@@ -663,7 +701,7 @@ function stop_existing_pipeline(): void
     shell_exec('pkill -f ' . escapeshellarg(YOUTUBE_FIFO_PATH . '.metadata') . ' 2>/dev/null');
 
     for ($i = 0; $i < 10; $i++) {
-        $stillRunning = trim((string) shell_exec('pgrep -f "yt-dlp|ffmpeg" 2>/dev/null'));
+        $stillRunning = trim((string) shell_exec('pgrep -f ' . escapeshellarg('yt-dlp|' . OUR_FFMPEG_PATTERN) . ' 2>/dev/null'));
         if ($stillRunning === '') {
             return;
         }
@@ -674,7 +712,7 @@ function stop_existing_pipeline(): void
     // process linger indefinitely and stack up further with every
     // subsequent play/stop/seek call.
     shell_exec('pkill -9 -f yt-dlp 2>/dev/null');
-    shell_exec('pkill -9 -f ffmpeg 2>/dev/null');
+    shell_exec('pkill -9 -f ' . escapeshellarg(OUR_FFMPEG_PATTERN) . ' 2>/dev/null');
 }
 
 function play_url(string $url, int $startAtSeconds = 0): array
@@ -914,7 +952,7 @@ function advance_queue_if_finished(): void
     $shuffle = $state['shuffle'];
     $repeat = $state['repeat'];
 
-    if (!queue_should_advance(owntone_get('/api/player'), $currentIndex, count($items))) {
+    if (!queue_should_advance(owntone_get('/api/player'), $currentIndex, count($items), is_pipeline_running())) {
         return;
     }
 

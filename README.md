@@ -225,12 +225,29 @@ redeploy elsewhere:
   within a live pipe stream — only a real file on disk is seekable. See
   "Preloading the next track" below for how the progress bar becomes
   draggable once the background download finishes.
-- **"Finished" detection needs slack, not an exact match.** The queue
-  daemon decides a track ended when OwnTone reports paused *and* progress
-  is within 4s of the reported duration — not 1s. The duration we send is
-  yt-dlp's rounded-to-the-second estimate, and the actual streamed/decoded
-  audio has been observed ending ~2s short of it; too tight a window means
-  finished tracks never get detected and playback just stalls forever.
+- **"Finished" detection needs slack, not an exact match — and a second,
+  independent signal.** The queue daemon primarily decides a track ended
+  when OwnTone reports paused *and* progress is within 4s of the reported
+  duration — not 1s, since the duration we send is yt-dlp's rounded-to-
+  the-second estimate and the actual streamed/decoded audio routinely
+  ends a couple of seconds short of it. But for *some* videos the gap is
+  bigger than 4s (codec/container-dependent), and the daemon got stuck
+  paused with several seconds still "remaining" by that estimate,
+  never advancing. `queue_should_advance()` now also treats "our own
+  ffmpeg pipeline process has already exited on its own" as an
+  independent, duration-estimate-agnostic finished signal (requires
+  progress > 0, so a track that never actually started isn't mistaken
+  for finished) — see `is_pipeline_running()`.
+- **A bare `ffmpeg`/`yt-dlp` pkill/pgrep pattern isn't safe on a shared
+  host.** This box also runs Jellyfin, which spawns its own long-running
+  `ffmpeg` processes (transcoding, thumbnail generation) — a plain
+  `pkill -f ffmpeg` would also kill Jellyfin's unrelated processes on
+  every play/stop/seek, and a plain `pgrep -f ffmpeg` would report our
+  own pipeline as "still running" almost permanently regardless of its
+  real state (confirmed live: `is_pipeline_running()` returned `true`
+  with zero of our own processes running, purely from Jellyfin's).
+  `OUR_FFMPEG_PATTERN` matches a substring unique to our own ffmpeg
+  invocation (`wav -ar 44100 -ac 2 pipe:1`) instead.
 - **Prev/Next and the playing-item highlight are driven by server state,
   not browser memory.** `app.js` re-fetches `action=queue_state` on every
   websocket tick (piggybacking on OwnTone's own event cadence) instead of

@@ -217,6 +217,26 @@ assert_true(!queue_should_advance($finishedPlayer, -1, 3), 'queue_should_advance
 $unknownDurationPlayer = ['state' => 'pause', 'item_progress_ms' => 0, 'item_length_ms' => 0];
 assert_true(!queue_should_advance($unknownDurationPlayer, 0, 3), 'queue_should_advance is false when duration is unknown (0) rather than guessing');
 
+// Some videos' actual decoded audio ends more than the 4s tolerance short
+// of yt-dlp's duration estimate — the daemon got stuck paused with several
+// seconds still "remaining" by that estimate and never advanced. The
+// ffmpeg-process-exited fallback is what catches this case.
+$stuckFarFromEstimate = ['state' => 'pause', 'item_progress_ms' => 180000, 'item_length_ms' => 200000];
+assert_true(
+    !queue_should_advance($stuckFarFromEstimate, 0, 3),
+    'queue_should_advance stays false via duration alone when nowhere near the estimated end (pipeline still running by default)'
+);
+assert_true(
+    queue_should_advance($stuckFarFromEstimate, 0, 3, false),
+    'queue_should_advance is true once the ffmpeg pipeline has exited on its own, even far from the duration estimate'
+);
+
+$neverStartedPlayer = ['state' => 'pause', 'item_progress_ms' => 0, 'item_length_ms' => 200000];
+assert_true(
+    !queue_should_advance($neverStartedPlayer, 0, 3, false),
+    'queue_should_advance is false when the pipeline exited but progress is still 0 — never actually started, not "finished"'
+);
+
 assert_true(next_queue_index(0, 3, false) === 1, 'next_queue_index (sequential) moves forward by one');
 assert_true(next_queue_index(2, 3, false) === null, 'next_queue_index (sequential) stops at the end of the queue');
 assert_true(next_queue_index(0, 1, true) === null, 'next_queue_index (shuffle) has nowhere to go with only one item');
