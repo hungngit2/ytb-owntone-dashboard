@@ -70,6 +70,8 @@ $queueItems = [
 assert_true(next_preload_target($queueItems, 0, false) === 'https://youtu.be/bbbbbbbbbbb', 'next_preload_target picks the following sequential item');
 assert_true(next_preload_target($queueItems, 2, false) === null, 'next_preload_target is null at the end of the queue');
 assert_true(next_preload_target($queueItems, 0, true) === null, 'next_preload_target is null in shuffle mode (no fixed next to preload)');
+assert_true(next_preload_target($queueItems, 2, false, 'all') === 'https://youtu.be/aaaaaaaaaaa', 'next_preload_target (repeat-all) wraps to the first item at the end');
+assert_true(next_preload_target($queueItems, 0, false, 'one') === null, 'next_preload_target (repeat-one) is null — the "next" track is already cached (it is the current one)');
 
 $preloadCmd = build_preload_cmd('https://youtu.be/dQw4w9WgXcQ', '/tmp/cache/dQw4w9WgXcQ.audio');
 assert_true(str_starts_with($preloadCmd, 'nohup sh -c'), 'preload cmd is wrapped in nohup');
@@ -180,14 +182,23 @@ rmdir(dirname($tmpSearchFile));
 
 $tmpQueueFile = sys_get_temp_dir() . '/queue_state_test_' . uniqid() . '/queue_state.json';
 $emptyQueueState = load_queue_state($tmpQueueFile);
-assert_true($emptyQueueState === ['items' => [], 'current_index' => -1, 'shuffle' => false], 'load_queue_state returns an empty queue when file does not exist');
+assert_true(
+    $emptyQueueState === ['items' => [], 'current_index' => -1, 'shuffle' => false, 'repeat' => 'off'],
+    'load_queue_state returns an empty queue when file does not exist'
+);
 
-save_queue_state([['webpage_url' => 'https://youtu.be/eee']], 0, true, $tmpQueueFile);
+save_queue_state([['webpage_url' => 'https://youtu.be/eee']], 0, true, 'all', $tmpQueueFile);
 $loadedQueueState = load_queue_state($tmpQueueFile);
 assert_true(
-    count($loadedQueueState['items']) === 1 && $loadedQueueState['current_index'] === 0 && $loadedQueueState['shuffle'] === true,
-    'save_queue_state/load_queue_state round-trip preserves items, current_index, and shuffle'
+    count($loadedQueueState['items']) === 1
+        && $loadedQueueState['current_index'] === 0
+        && $loadedQueueState['shuffle'] === true
+        && $loadedQueueState['repeat'] === 'all',
+    'save_queue_state/load_queue_state round-trip preserves items, current_index, shuffle, and repeat'
 );
+
+file_put_contents($tmpQueueFile, json_encode(['items' => [], 'current_index' => -1, 'shuffle' => false, 'repeat' => 'bogus']));
+assert_true(load_queue_state($tmpQueueFile)['repeat'] === 'off', 'load_queue_state normalizes an invalid repeat value to off');
 
 unlink($tmpQueueFile);
 rmdir(dirname($tmpQueueFile));
@@ -215,6 +226,12 @@ $pickIndex = 0;
 $picker = function () use ($fixedPicks, &$pickIndex) {
     return $fixedPicks[$pickIndex++];
 };
-assert_true(next_queue_index(0, 3, true, $picker) === 2, 'next_queue_index (shuffle) retries until it picks something other than the current index');
+assert_true(next_queue_index(0, 3, true, 'off', $picker) === 2, 'next_queue_index (shuffle) retries until it picks something other than the current index');
+
+assert_true(next_queue_index(1, 3, false, 'one') === 1, 'next_queue_index (repeat-one) always replays the same index, sequential mode');
+assert_true(next_queue_index(1, 3, true, 'one') === 1, 'next_queue_index (repeat-one) always replays the same index, shuffle mode');
+assert_true(next_queue_index(2, 3, false, 'all') === 0, 'next_queue_index (repeat-all, sequential) wraps to the first item at the end');
+assert_true(next_queue_index(1, 3, false, 'all') === 2, 'next_queue_index (repeat-all, sequential) still just moves forward before the end');
+assert_true(next_queue_index(0, 1, true, 'all') === 0, 'next_queue_index (repeat-all, shuffle) wraps to the only item rather than returning null');
 
 echo "All backend helper tests passed.\n";

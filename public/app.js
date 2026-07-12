@@ -158,6 +158,13 @@ function renderResults() {
     row.append(thumb, meta, actions);
     list.appendChild(row);
   });
+
+  // Rows are brand new DOM elements (list.innerHTML was cleared above),
+  // so re-run the highlight/auto-scroll against them even if the playing
+  // video id itself hasn't changed — e.g. switching to the Playlist tab
+  // should still scroll to the playing item there on its own first render.
+  lastAutoScrolledVideoId = null;
+  updatePlayingHighlight();
 }
 
 function parseIso8601Duration(iso) {
@@ -511,6 +518,8 @@ async function syncServerQueue() {
     serverQueue = await res.json();
     shuffleEnabled = Boolean(serverQueue.shuffle);
     document.getElementById('shuffle-btn').classList.toggle('active', shuffleEnabled);
+    repeatMode = serverQueue.repeat || 'off';
+    reflectRepeatUI();
     document.getElementById('progress-track').classList.toggle('seekable', Boolean(serverQueue.seekable));
     renderNowPlaying(lastKnownQueueTitle);
     updateCookingIndicator();
@@ -538,6 +547,35 @@ function currentQueueItem() {
   return serverQueue.items[serverQueue.current_index] || null;
 }
 
+// Scrolls the now-playing title back and forth if it doesn't fit — plain
+// truncation with an ellipsis hides information a marquee can instead
+// reveal over time. Skips the reset+re-measure when the text hasn't
+// actually changed, so the (frequent, every websocket sync) re-render of
+// the same still-playing title doesn't keep restarting the animation.
+let lastRenderedTitleText = null;
+
+function setNowTitleText(text) {
+  if (text === lastRenderedTitleText) {
+    return;
+  }
+  lastRenderedTitleText = text;
+
+  const titleEl = document.getElementById('now-title');
+  const textEl = document.getElementById('now-title-text');
+  textEl.textContent = text;
+  textEl.classList.remove('marquee');
+  titleEl.style.removeProperty('--marquee-distance');
+
+  // Measured on the next frame so layout reflects the new text first.
+  requestAnimationFrame(() => {
+    const overflow = textEl.scrollWidth - titleEl.clientWidth;
+    if (overflow > 4) {
+      titleEl.style.setProperty('--marquee-distance', `-${overflow}px`);
+      textEl.classList.add('marquee');
+    }
+  });
+}
+
 function renderNowPlaying(fallbackTitle) {
   const titleEl = document.getElementById('now-title');
   titleEl.classList.remove('loading');
@@ -555,7 +593,7 @@ function renderNowPlaying(fallbackTitle) {
   // flash on reload (the exact bug this function exists to avoid).
   const ownToneReportedTitle = !isRawFifoFilename(fallbackTitle) ? fallbackTitle : '';
 
-  titleEl.textContent = currentTrackInfo.title || (queueItem && queueItem.title) || ownToneReportedTitle || 'Nothing playing';
+  setNowTitleText(currentTrackInfo.title || (queueItem && queueItem.title) || ownToneReportedTitle || 'Nothing playing');
 
   document.getElementById('now-subtitle').textContent =
     currentTrackInfo.channel || (queueItem && queueItem.channel) || '';
@@ -595,11 +633,25 @@ function nowPlayingVideoId() {
   return item ? extractYoutubeVideoId(item.webpage_url) : null;
 }
 
+// Scrolls the playing row into view, but only when the playing video id
+// actually CHANGES — otherwise this runs on every periodic sync (every
+// few seconds) and would keep yanking the list back even while the user
+// is deliberately scrolled elsewhere browsing other results.
+let lastAutoScrolledVideoId = null;
+
 function updatePlayingHighlight() {
   const playingVideoId = nowPlayingVideoId();
   document.querySelectorAll('.result-row').forEach((row) => {
     row.classList.toggle('playing', Boolean(playingVideoId) && row.dataset.videoId === playingVideoId);
   });
+
+  if (playingVideoId && playingVideoId !== lastAutoScrolledVideoId) {
+    const playingRow = document.querySelector(`.result-row[data-video-id="${playingVideoId}"]`);
+    if (playingRow) {
+      playingRow.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      lastAutoScrolledVideoId = playingVideoId;
+    }
+  }
 }
 
 function currentPlayingIndex() {
@@ -629,6 +681,13 @@ function playRelative(offset) {
 }
 
 let shuffleEnabled = false;
+let repeatMode = 'off'; // 'off' | 'all' | 'one' — mirrors serverQueue.repeat
+
+function reflectRepeatUI() {
+  const btn = document.getElementById('repeat-btn');
+  btn.classList.toggle('active', repeatMode !== 'off');
+  btn.classList.toggle('repeat-one', repeatMode === 'one');
+}
 
 // Only one play/seek/stop request in flight at a time from this tab.
 // Clicking Play on one row previously only disabled THAT row's button —
@@ -658,7 +717,7 @@ async function playQueueItem(items, index, triggerBtn) {
 
   const titleEl = document.getElementById('now-title');
   titleEl.classList.add('loading');
-  titleEl.textContent = 'Loading...';
+  setNowTitleText('Loading...');
 
   try {
     const res = await fetch('backend.php', {
@@ -668,7 +727,8 @@ async function playQueueItem(items, index, triggerBtn) {
         'action=play_queue' +
         `&items=${encodeURIComponent(JSON.stringify(items))}` +
         `&index=${index}` +
-        `&shuffle=${shuffleEnabled ? '1' : ''}`,
+        `&shuffle=${shuffleEnabled ? '1' : ''}` +
+        `&repeat=${repeatMode}`,
     });
     const data = await res.json();
 
@@ -749,6 +809,20 @@ let lastKnownIsPlaying = false;
 let lastSeenItemId = null;
 let hasConfirmedPlaybackForItemId = false;
 
+// Corrects for a confirmed OwnTone quirk: pausing/resuming a pipe-based
+// track (a live yt-dlp|ffmpeg stream, not a real seekable file) resets
+// OwnTone's own item_progress_ms to ~0 on resume and it never catches
+// back up — verified live by PID: the same ffmpeg/yt-dlp process kept
+// running unchanged across pause/resume (so the actual audio itself isn't
+// restarting), only OwnTone's reported position is wrong. Without this,
+// our own progress bar/time display looked like the track had restarted
+// from the beginning, matching exactly what was reported. Recalculated
+// on every pause→resume cycle (see the play-pause-btn handler) and reset
+// to 0 whenever the item id changes (a real new track, where OwnTone's
+// own progress is correct from the start).
+let progressOffsetSeconds = 0;
+let pausedAtSeconds = 0;
+
 // Shows the thumbnail spinner while a track is queued but OwnTone hasn't
 // actually confirmed it's playing yet — the "cooking" window between
 // launching the yt-dlp/ffmpeg pipeline into the fifo and OwnTone's own
@@ -768,6 +842,7 @@ function applyPlayerState(player, queue) {
   if (player.currentItemId !== lastSeenItemId) {
     lastSeenItemId = player.currentItemId;
     hasConfirmedPlaybackForItemId = false;
+    progressOffsetSeconds = 0;
   }
   if (player.isPlaying || player.progressSeconds > 0) {
     hasConfirmedPlaybackForItemId = true;
@@ -791,7 +866,7 @@ function applyPlayerState(player, queue) {
     reflectVolumeUI(player.volume);
   }
 
-  startProgressTicker(player.isPlaying, player.progressSeconds, player.durationSeconds);
+  startProgressTicker(player.isPlaying, player.progressSeconds + progressOffsetSeconds, player.durationSeconds);
 }
 
 // Single place that keeps the slider, label, and mute icon in sync,
@@ -909,8 +984,25 @@ async function refreshPlayerState() {
   }
 }
 
+let wsReconnectTimer = null;
+let wsReconnectDelayMs = 2000;
+
+// The websocket only pushes on OwnTone's own state changes — if the
+// connection ever drops (network blip, OwnTone restart, proxy timeout)
+// and is never retried, "live" updates silently stop until the page is
+// manually reloaded (the exact "doesn't live-update" bug this fixes).
+// Backs off up to 30s between attempts rather than hammering OwnTone.
+function scheduleWebSocketReconnect() {
+  clearTimeout(wsReconnectTimer);
+  wsReconnectTimer = setTimeout(() => {
+    wsReconnectDelayMs = Math.min(wsReconnectDelayMs * 2, 30000);
+    connectWebSocket();
+  }, wsReconnectDelayMs);
+}
+
 async function connectWebSocket() {
   const statusEl = document.getElementById('ws-status');
+  clearTimeout(wsReconnectTimer);
 
   let websocketPort;
   try {
@@ -918,11 +1010,13 @@ async function connectWebSocket() {
     websocketPort = config.websocket_port;
   } catch (err) {
     statusEl.classList.remove('ws-connected');
+    scheduleWebSocketReconnect();
     return;
   }
 
   if (!websocketPort) {
     statusEl.classList.remove('ws-connected');
+    scheduleWebSocketReconnect();
     return;
   }
 
@@ -930,6 +1024,7 @@ async function connectWebSocket() {
 
   ws.addEventListener('open', () => {
     statusEl.classList.add('ws-connected');
+    wsReconnectDelayMs = 2000; // reset backoff after a successful connect
     ws.send(JSON.stringify({ notify: ['player', 'queue', 'volume'] }));
     refreshPlayerState();
   });
@@ -940,6 +1035,7 @@ async function connectWebSocket() {
 
   ws.addEventListener('close', () => {
     statusEl.classList.remove('ws-connected');
+    scheduleWebSocketReconnect();
   });
 
   ws.addEventListener('error', () => {
@@ -988,9 +1084,36 @@ if (typeof document !== 'undefined') {
     }).catch(() => {});
   });
 
+  document.getElementById('repeat-btn').addEventListener('click', () => {
+    repeatMode = repeatMode === 'off' ? 'all' : repeatMode === 'all' ? 'one' : 'off';
+    reflectRepeatUI();
+    // Also updates the currently-active daemon queue immediately, not just
+    // the next play action — so toggling mid-playlist takes effect right away.
+    fetch('backend.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `action=set_repeat&repeat=${repeatMode}`,
+    }).catch(() => {});
+  });
+
   document.getElementById('play-pause-btn').addEventListener('click', () => {
-    const endpoint = lastKnownIsPlaying ? 'pause' : 'play';
-    fetch(`${owntoneBase()}/api/player/${endpoint}`, { method: 'PUT' })
+    if (lastKnownIsPlaying) {
+      // Applied immediately, not just on resume — OwnTone resets its own
+      // progress counter to ~0 the instant it pauses (confirmed live), so
+      // without this the display would jump to 0:00 for the whole time
+      // it's sitting paused, not just misreport after resuming.
+      pausedAtSeconds = syncedProgressSeconds + (Date.now() - progressSyncedAtMs) / 1000;
+      progressOffsetSeconds = pausedAtSeconds;
+      fetch(`${owntoneBase()}/api/player/pause`, { method: 'PUT' })
+        .then(refreshPlayerState)
+        .catch(() => document.getElementById('ws-status').classList.remove('ws-connected'));
+      return;
+    }
+
+    // progressOffsetSeconds is already set from the pause step above, and
+    // OwnTone starts counting up from ~0 again on resume, so raw + offset
+    // continues to read correctly with no further adjustment needed here.
+    fetch(`${owntoneBase()}/api/player/play`, { method: 'PUT' })
       .then(refreshPlayerState)
       .catch(() => document.getElementById('ws-status').classList.remove('ws-connected'));
   });
@@ -1053,4 +1176,9 @@ if (typeof document !== 'undefined') {
   connectWebSocket();
   loadLastSearch();
   loadPlaylists();
+
+  // Defense in depth alongside the websocket: even if a reconnect is
+  // delayed or a push is somehow missed, this guarantees playing info
+  // can't silently go stale for more than this interval without a reload.
+  setInterval(refreshPlayerState, 15000);
 }

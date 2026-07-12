@@ -38,12 +38,23 @@ piping audio into a named pipe.
   next item itself once the current one actually finishes — no browser tab
   needs to stay open for this to work. A shuffle toggle changes what
   "next" means (random, never repeating the current item) and can be
-  flipped mid-playlist without interrupting what's currently playing. The
-  next sequential track is also pre-downloaded in the background while
-  the current one plays (see "Preloading the next track" below), so
-  switching is close to instant instead of waiting on yt-dlp each time.
+  flipped mid-playlist without interrupting what's currently playing. A
+  repeat toggle (off / repeat-all / repeat-one, cycled by one button)
+  changes what happens once the queue runs out: stop (off), wrap back to
+  the first item (all), or replay the same track indefinitely (one) —
+  both toggles are persisted server-side (`shuffle`/`repeat` in
+  `queue_state.json`) so `bin/queue-daemon.php` honors them with no
+  browser involved. The next sequential track is also pre-downloaded in
+  the background while the current one plays (see "Preloading the next
+  track" below), so switching is close to instant instead of waiting on
+  yt-dlp each time.
 - The last search and all playlists are cached server-side (as JSON files)
   so a page refresh or a different browser sees the same thing.
+- **The now-playing title scrolls (marquee) instead of truncating** when
+  it doesn't fit the hero card, and **the currently-playing row
+  auto-scrolls into view** in the results/playlist list whenever the
+  playing track changes (not on every periodic sync, so it doesn't fight
+  you scrolling to browse other results while something plays).
 
 ## Requirements
 
@@ -163,7 +174,24 @@ redeploy elsewhere:
 - **OwnTone's WebSocket** listens on a *separate* port from its HTTP API
   (returned by `GET /api/config`'s `websocket_port`), at the root path, and
   requires the `notify` subprotocol — `app.js` discovers this dynamically,
-  it isn't hardcoded to port 3689.
+  it isn't hardcoded to port 3689. It also has no built-in reconnect: if
+  the connection ever drops (network blip, OwnTone restart), `app.js` now
+  retries with backoff (capped at 30s) instead of silently going stale
+  until the page is manually reloaded — plus a 15s polling fallback as a
+  second line of defense either way.
+- **Pausing a pipe-based track resets OwnTone's own progress counter to
+  ~0, and it never recovers on its own.** Verified live by process ID:
+  the same `ffmpeg`/`yt-dlp` pipeline keeps running unchanged across
+  pause/resume (the audio itself isn't restarting), but OwnTone's reported
+  `item_progress_ms` drops to ~0 the instant you pause and starts counting
+  up from there again on resume — a display/tracking quirk specific to
+  this pipe data source, not a real restart. `app.js` corrects for it with
+  its own offset (`progressOffsetSeconds`, captured at pause time from the
+  locally-interpolated position and re-applied on top of whatever OwnTone
+  reports), rather than trusting OwnTone's number directly. This only
+  covers pause/resume through this app's own button — pausing via some
+  other OwnTone client isn't tracked and would still show the raw
+  (wrong) position.
 - **Directory traversal permissions can silently reset.** A file can be
   `0777` and still be unreadable/unwritable by the PHP process if *any
   parent directory* in the path lacks execute/search permission for that
