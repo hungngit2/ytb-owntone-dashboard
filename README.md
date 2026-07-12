@@ -5,6 +5,8 @@ A dark-mode, single-page PHP + vanilla JS dashboard for a home server running
 YouTube URL, save songs into named playlists, and play through OwnTone by
 piping audio into a named pipe.
 
+![Dashboard screenshot](docs/screenshot.png)
+
 ## How it works
 
 - Type a search term or paste a YouTube URL into the single input box.
