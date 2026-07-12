@@ -22,6 +22,20 @@ function isYoutubeUrl(input) {
   );
 }
 
+// Only a genuine playlist page (youtube.com/playlist?list=X), not a video
+// played *within* a playlist context (watch?v=X&list=Y) — the latter is
+// still just one video and stays on the single-video resolve path, same
+// as yt-dlp's own --no-playlist elsewhere in this app avoids pulling in
+// an entire radio mix/playlist when only one video was actually asked for.
+function isYoutubePlaylistUrl(input) {
+  return /^https?:\/\/(www\.)?youtube\.com\/playlist\?(?:.*&)?list=/i.test(input.trim());
+}
+
+function extractYoutubePlaylistId(url) {
+  const match = /[?&]list=([a-zA-Z0-9_-]+)/.exec(url || '');
+  return match ? match[1] : null;
+}
+
 // The same video can appear as youtube.com/watch?v=X, youtu.be/X, or with
 // extra query params depending on whether the URL came from a search
 // result or a pasted link — matching by raw URL string can miss the same
@@ -67,7 +81,15 @@ function mapQueueResponse(queue, currentItemId) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { isYoutubeUrl, extractYoutubeVideoId, mapPlayerResponse, mapQueueResponse, sanitizeVolume };
+  module.exports = {
+    isYoutubeUrl,
+    isYoutubePlaylistUrl,
+    extractYoutubePlaylistId,
+    extractYoutubeVideoId,
+    mapPlayerResponse,
+    mapQueueResponse,
+    sanitizeVolume,
+  };
 }
 
 let searchResults = [];
@@ -176,6 +198,29 @@ function parseIso8601Duration(iso) {
   return `${totalMinutes}:${String(seconds).padStart(2, '0')}`;
 }
 
+// Batches videos.list calls in groups of 50 (the API's per-request cap on
+// comma-separated ids) — search results never exceed 30 so this never
+// mattered there, but a playlist commonly has more than 50 items.
+async function fetchDurationsById(videoIds) {
+  const durationById = {};
+  for (let i = 0; i < videoIds.length; i += 50) {
+    const batch = videoIds.slice(i, i + 50);
+    if (batch.length === 0) {
+      continue;
+    }
+    const detailsUrl =
+      'https://www.googleapis.com/youtube/v3/videos' +
+      `?key=${encodeURIComponent(YOUTUBE_API_KEY)}` +
+      `&part=contentDetails&id=${batch.join(',')}`;
+    const detailsRes = await fetch(detailsUrl);
+    const detailsData = await detailsRes.json();
+    (detailsData.items || []).forEach((v) => {
+      durationById[v.id] = parseIso8601Duration(v.contentDetails.duration);
+    });
+  }
+  return durationById;
+}
+
 // Runs entirely in the browser against YouTube's official Data API v3 —
 // deliberately NOT routed through the backend, since the previous
 // yt-dlp-based server-side search was heavy enough to freeze the host
@@ -200,20 +245,7 @@ async function searchYouTube(query) {
 
   const items = searchData.items || [];
   const videoIds = items.map((item) => item.id.videoId).filter(Boolean);
-
-  let durationById = {};
-  if (videoIds.length > 0) {
-    const detailsUrl =
-      'https://www.googleapis.com/youtube/v3/videos' +
-      `?key=${encodeURIComponent(YOUTUBE_API_KEY)}` +
-      `&part=contentDetails&id=${videoIds.join(',')}`;
-    const detailsRes = await fetch(detailsUrl);
-    const detailsData = await detailsRes.json();
-    durationById = (detailsData.items || []).reduce((acc, v) => {
-      acc[v.id] = parseIso8601Duration(v.contentDetails.duration);
-      return acc;
-    }, {});
-  }
+  const durationById = await fetchDurationsById(videoIds);
 
   return items.map((item) => ({
     title: item.snippet.title,
@@ -222,6 +254,66 @@ async function searchYouTube(query) {
     thumbnail: (item.snippet.thumbnails.medium || item.snippet.thumbnails.default || {}).url || '',
     channel: item.snippet.channelTitle,
   }));
+}
+
+// Same client-side approach as search (never touches the backend/yt-dlp).
+// Paginates via nextPageToken, capped at 5 pages (250 videos) so a
+// pathological giant playlist can't hang the tab fetching indefinitely.
+async function fetchYoutubePlaylistItems(playlistId) {
+  if (typeof YOUTUBE_API_KEY === 'undefined' || !YOUTUBE_API_KEY) {
+    throw new Error('YouTube API key not configured — copy config.example.js to config.js');
+  }
+
+  let items = [];
+  let pageToken = '';
+  for (let page = 0; page < 5; page++) {
+    const url =
+      'https://www.googleapis.com/youtube/v3/playlistItems' +
+      `?key=${encodeURIComponent(YOUTUBE_API_KEY)}` +
+      '&part=snippet&maxResults=50' +
+      `&playlistId=${encodeURIComponent(playlistId)}` +
+      (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '');
+    const res = await fetch(url);
+    const data = await res.json();
+
+    if (data.error) {
+      throw new Error(data.error.message || 'YouTube playlist lookup failed');
+    }
+
+    items = items.concat(data.items || []);
+    pageToken = data.nextPageToken || '';
+    if (!pageToken) {
+      break;
+    }
+  }
+
+  // Deleted/private videos still occupy a slot in the playlist listing
+  // but have no real video behind them — nothing to play, so skip them.
+  items = items.filter(
+    (item) =>
+      item.snippet &&
+      item.snippet.resourceId &&
+      item.snippet.resourceId.videoId &&
+      item.snippet.title !== 'Deleted video' &&
+      item.snippet.title !== 'Private video'
+  );
+
+  const videoIds = items.map((item) => item.snippet.resourceId.videoId);
+  const durationById = await fetchDurationsById(videoIds);
+
+  return items.map((item) => {
+    const videoId = item.snippet.resourceId.videoId;
+    return {
+      title: item.snippet.title,
+      webpage_url: `https://www.youtube.com/watch?v=${videoId}`,
+      duration_string: durationById[videoId] || '',
+      thumbnail: (item.snippet.thumbnails.medium || item.snippet.thumbnails.default || {}).url || '',
+      // videoOwnerChannelTitle is the video's own uploader; a playlistItem's
+      // plain channelTitle is the PLAYLIST owner instead, wrong for videos
+      // added to the playlist from other channels.
+      channel: item.snippet.videoOwnerChannelTitle || item.snippet.channelTitle || '',
+    };
+  });
 }
 
 function cacheLastSearch(results) {
@@ -244,6 +336,33 @@ async function runSearch(query) {
     cacheLastSearch(searchResults);
   } catch (err) {
     showError(err.message || 'Search request failed');
+  }
+}
+
+// Resolves every video in a pasted playlist link into the search results
+// list — same list you'd get from a text search, so Play/Save/Play-all
+// all work on it unchanged.
+async function runPlaylistImport(url) {
+  setActiveTab('search');
+  showLoading('Loading playlist...');
+
+  const playlistId = extractYoutubePlaylistId(url);
+  if (!playlistId) {
+    showError('Could not find a playlist in that link');
+    return;
+  }
+
+  try {
+    searchResults = await fetchYoutubePlaylistItems(playlistId);
+    if (searchResults.length === 0) {
+      showError('Playlist is empty, or none of its videos are available');
+      return;
+    }
+    renderResults();
+    cacheLastSearch(searchResults);
+    document.getElementById('search-input').value = '';
+  } catch (err) {
+    showError(err.message || 'Playlist request failed');
   }
 }
 
@@ -1050,7 +1169,9 @@ if (typeof document !== 'undefined') {
     const value = input.value.trim();
     if (!value) return;
 
-    if (isYoutubeUrl(value)) {
+    if (isYoutubePlaylistUrl(value)) {
+      runPlaylistImport(value);
+    } else if (isYoutubeUrl(value)) {
       resolveUrlToResult(value);
     } else {
       runSearch(value);

@@ -1,10 +1,37 @@
 const assert = require('assert');
-const { isYoutubeUrl, extractYoutubeVideoId, mapPlayerResponse, mapQueueResponse, sanitizeVolume } = require('../public/app.js');
+const {
+  isYoutubeUrl,
+  isYoutubePlaylistUrl,
+  extractYoutubePlaylistId,
+  extractYoutubeVideoId,
+  mapPlayerResponse,
+  mapQueueResponse,
+  sanitizeVolume,
+} = require('../public/app.js');
 
 assert.strictEqual(isYoutubeUrl('https://www.youtube.com/watch?v=abc123'), true, 'accepts watch url');
 assert.strictEqual(isYoutubeUrl('https://youtu.be/abc123'), true, 'accepts short url');
 assert.strictEqual(isYoutubeUrl('lofi hip hop radio'), false, 'rejects plain text');
 assert.strictEqual(isYoutubeUrl('https://vimeo.com/123'), false, 'rejects other domains');
+
+assert.strictEqual(
+  isYoutubePlaylistUrl('https://www.youtube.com/playlist?list=PLWz5rJ2EKKc9CBxr3BVjPTPoDPLdPIFCE'),
+  true,
+  'accepts a playlist page url'
+);
+assert.strictEqual(
+  isYoutubePlaylistUrl('https://www.youtube.com/watch?v=abc12345678&list=PLWz5rJ2EKKc9CBxr3BVjPTPoDPLdPIFCE'),
+  false,
+  'a single video played within a playlist context is not treated as a playlist import'
+);
+assert.strictEqual(isYoutubePlaylistUrl('lofi hip hop radio'), false, 'rejects plain text');
+
+assert.strictEqual(
+  extractYoutubePlaylistId('https://www.youtube.com/playlist?list=PLWz5rJ2EKKc9CBxr3BVjPTPoDPLdPIFCE'),
+  'PLWz5rJ2EKKc9CBxr3BVjPTPoDPLdPIFCE',
+  'extracts the playlist id'
+);
+assert.strictEqual(extractYoutubePlaylistId('https://www.youtube.com/watch?v=abc123'), null, 'returns null when there is no list param');
 
 assert.strictEqual(
   extractYoutubeVideoId('https://www.youtube.com/watch?v=dQw4w9WgXcQ'),

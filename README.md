@@ -8,12 +8,18 @@ piping audio into a named pipe.
 ## How it works
 
 - Type a search term or paste a YouTube URL into the single input box.
-  - A YouTube URL resolves its title/thumbnail/channel (via YouTube's
-    oEmbed endpoint) and shows it as a single result card — it doesn't
-    auto-play.
+  - A single-video URL resolves its title/thumbnail/channel (via
+    YouTube's oEmbed endpoint) and shows it as a single result card — it
+    doesn't auto-play.
+  - A **playlist URL** (`youtube.com/playlist?list=...`) resolves every
+    video in it into the results list, same as a text search — paginated
+    via the Data API (up to 250 videos, 5 pages), so Play/Save/Play All
+    all work on it unchanged. A video URL that merely happens to be
+    playing *within* a playlist context (`watch?v=X&list=Y`) is still
+    just resolved as the one video, not auto-imported as a playlist.
   - Plain text searches YouTube's official **Data API v3 directly from the
-    browser** (30 results). This runs entirely client-side — the backend is
-    never involved in search, so it can't load the server.
+    browser** (30 results). Both this and the playlist import run entirely
+    client-side — the backend is never involved, so it can't load the server.
 - Clicking Play kills any in-flight stream, tells OwnTone to queue and start
   that track, then launches a detached `yt-dlp | ffmpeg -re` pipeline that
   writes WAV audio into OwnTone's named pipe at real playback speed (not a

@@ -415,7 +415,6 @@ body {
 #search-form {
   display: flex;
   gap: 8px;
-  margin-bottom: 16px;
 }
 
 #search-input {
@@ -452,6 +451,10 @@ body {
 }
 
 /* ---- Volume ---- */
+
+#volume-row {
+  margin-bottom: 16px;
+}
 
 .volume-label-row {
   display: flex;
@@ -831,7 +834,7 @@ body {
     padding: 10px 16px;
   }
 
-  #search-form {
+  #volume-row {
     margin-bottom: 8px;
   }
 

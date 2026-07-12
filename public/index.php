@@ -52,11 +52,6 @@
       </div>
 
       <div class="hero-panel">
-        <form id="search-form">
-          <input id="search-input" type="text" placeholder="Search or paste a YouTube link..." autocomplete="off">
-          <button id="search-btn" type="submit" aria-label="Search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>
-        </form>
-
         <div id="volume-row">
           <div class="volume-label-row">
             <span class="volume-label">
@@ -67,6 +62,11 @@
           </div>
           <input id="volume-slider" type="range" min="0" max="100" value="50">
         </div>
+
+        <form id="search-form">
+          <input id="search-input" type="text" placeholder="Search or paste a YouTube link..." autocomplete="off">
+          <button id="search-btn" type="submit" aria-label="Search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>
+        </form>
       </div>
     </div>
 
