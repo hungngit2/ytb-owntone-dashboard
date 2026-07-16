@@ -221,6 +221,36 @@ redeploy elsewhere:
   normal use — confirmed multiple times, requiring a physical power-cycle.
   Search now runs entirely in the browser against the YouTube Data API.
   Don't reintroduce a server-side search path without a very good reason.
+  The one deliberate exception is Mix/Radio playlists (`list=RD...`,
+  `handle_resolve_mix_playlist`) — the Data API can't look those up at
+  all, and `yt-dlp --flat-playlist` (no per-video extraction, capped via
+  `--playlist-end`/`MIX_PLAYLIST_MAX_ITEMS`) is far cheaper than the old
+  `--dump-json` search path, but it's still real server-side yt-dlp usage
+  so keep it that narrow.
+- **Wrapping a bare `yt-dlp` in `timeout` breaks under php-fpm's
+  `shell_exec`, even though bare `yt-dlp` alone works fine.** Confirmed
+  live: `shell_exec('yt-dlp --version')` succeeds, and the shell's own
+  `$PATH` (read via `shell_exec('echo $PATH')`) does list yt-dlp's
+  directory, but `shell_exec('timeout 20 yt-dlp ...')` fails with exit
+  127 ("failed to run command 'yt-dlp': No such file or directory") —
+  `timeout`'s own child-process exec doesn't resolve the bare name the
+  same way. `YTDLP_BIN`/`TIMEOUT_BIN` (absolute paths, from `which
+  yt-dlp`/`which timeout`) sidestep it. None of the other yt-dlp
+  invocations in this file hit this, since none of them wrap yt-dlp in
+  `timeout` — only `build_ytdlp_flat_playlist_cmd` does, since it's the
+  only synchronous (not fire-and-forget/backgrounded) yt-dlp call.
+- **A pasted playlist/video URL has to reach the same "save to last
+  search" path as a text search, or it silently isn't restorable on
+  reload.** `resolveUrlToResult` (single pasted video) was missing the
+  `cacheLastSearch()` call that `runSearch`/`runPlaylistImport` both make
+  — fixed by adding it there too.
+- **A `watch?v=X&list=Y` URL is still a playlist**, not just a single
+  video played in a playlist context — `isYoutubePlaylistUrl` used to
+  only match `youtube.com/playlist?list=X` pages and treated every
+  `watch?v=...&list=...` link as a lone video, silently dropping the rest
+  of the playlist. It now matches on the presence of a `list=` param
+  regardless of path, via `extractYoutubePlaylistId`, with Mix/Radio ids
+  (`list=RD...`) carved out to the separate resolver above.
 - **Seeking only works once a track is fully cached.** OwnTone can't seek
   within a live pipe stream — only a real file on disk is seekable. See
   "Preloading the next track" below for how the progress bar becomes

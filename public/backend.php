@@ -609,6 +609,79 @@ function handle_resolve_url(string $url): void
     ]);
 }
 
+// Auto-generated Mix/Radio lists (list=RD...) are dynamically built per
+// viewer and aren't retrievable via the YouTube Data API's playlistItems
+// endpoint (the client-side resolver used for real playlists) — yt-dlp
+// can still expand them directly from the watch url. --flat-playlist keeps
+// this cheap (one metadata pass over the list, no per-video extraction),
+// and --playlist-end caps a Mix's effectively endless list to something
+// reasonable to display. `timeout` guards a synchronous request against a
+// hung yt-dlp process.
+define('MIX_PLAYLIST_MAX_ITEMS', 50);
+// Confirmed live: under php-fpm's shell_exec, wrapping a bare "yt-dlp"
+// with a "timeout" prefix fails to resolve yt-dlp (exit 127) even though
+// a bare "yt-dlp" alone (no timeout wrapper) resolves fine, and even
+// though $PATH as read by the shell itself does list yt-dlp's directory —
+// timeout's own exec of its child command doesn't behave the same way.
+// Absolute paths for both sidestep this entirely; adjust if yt-dlp/timeout
+// live elsewhere on a different deployment (`which yt-dlp`, `which timeout`).
+define('YTDLP_BIN', '/usr/local/bin/yt-dlp');
+define('TIMEOUT_BIN', '/usr/bin/timeout');
+
+function build_ytdlp_flat_playlist_cmd(string $url): string
+{
+    return sprintf(
+        '%s 20 %s --flat-playlist --playlist-end %d -J %s 2>/dev/null',
+        TIMEOUT_BIN,
+        YTDLP_BIN,
+        MIX_PLAYLIST_MAX_ITEMS,
+        escapeshellarg($url)
+    );
+}
+
+function handle_resolve_mix_playlist(string $url): void
+{
+    if (!is_youtube_url($url)) {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'message' => 'not a valid YouTube URL']);
+        return;
+    }
+
+    $json = (string) shell_exec(build_ytdlp_flat_playlist_cmd($url));
+    $data = json_decode($json, true);
+    $entries = is_array($data) ? ($data['entries'] ?? []) : [];
+
+    $items = [];
+    foreach ($entries as $entry) {
+        $videoId = is_array($entry) ? ($entry['id'] ?? null) : null;
+        if (!is_string($videoId) || $videoId === '') {
+            continue;
+        }
+
+        $durationSeconds = (int) ($entry['duration'] ?? 0);
+        $thumbnails = is_array($entry['thumbnails'] ?? null) ? $entry['thumbnails'] : [];
+        $lastThumbnail = end($thumbnails);
+
+        $items[] = [
+            'title' => (string) ($entry['title'] ?? $videoId),
+            'webpage_url' => 'https://www.youtube.com/watch?v=' . $videoId,
+            'duration_string' => $durationSeconds > 0
+                ? sprintf('%d:%02d', intdiv($durationSeconds, 60), $durationSeconds % 60)
+                : '',
+            'thumbnail' => is_array($lastThumbnail) ? (string) ($lastThumbnail['url'] ?? '') : '',
+            'channel' => (string) ($entry['channel'] ?? $entry['uploader'] ?? ''),
+        ];
+    }
+
+    if (empty($items)) {
+        http_response_code(404);
+        echo json_encode(['status' => 'error', 'message' => 'Could not resolve this mix/radio playlist']);
+        return;
+    }
+
+    echo json_encode(['status' => 'ok', 'items' => $items]);
+}
+
 function ensure_metadata_pipe_exists(string $metadataFifoPath): void
 {
     shell_exec(sprintf(
@@ -1012,6 +1085,8 @@ if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
         handle_last_search();
     } elseif ($action === 'resolve_url') {
         handle_resolve_url((string) ($_POST['url'] ?? ''));
+    } elseif ($action === 'resolve_mix_playlist') {
+        handle_resolve_mix_playlist((string) ($_POST['url'] ?? ''));
     } else {
         http_response_code(400);
         echo json_encode(['status' => 'error', 'message' => 'unknown action']);

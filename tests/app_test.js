@@ -2,6 +2,7 @@ const assert = require('assert');
 const {
   isYoutubeUrl,
   isYoutubePlaylistUrl,
+  isYoutubeMixPlaylistUrl,
   extractYoutubePlaylistId,
   extractYoutubeVideoId,
   mapPlayerResponse,
@@ -21,10 +22,27 @@ assert.strictEqual(
 );
 assert.strictEqual(
   isYoutubePlaylistUrl('https://www.youtube.com/watch?v=abc12345678&list=PLWz5rJ2EKKc9CBxr3BVjPTPoDPLdPIFCE'),
-  false,
-  'a single video played within a playlist context is not treated as a playlist import'
+  true,
+  'a video played within a playlist context is also treated as a playlist import'
 );
 assert.strictEqual(isYoutubePlaylistUrl('lofi hip hop radio'), false, 'rejects plain text');
+assert.strictEqual(
+  isYoutubePlaylistUrl('https://www.youtube.com/watch?v=Bhg-Gw953b0&list=RDEMxGUZ2ZNtqwja6FDPezetCw&start_radio=1'),
+  false,
+  'a Mix/Radio list is excluded — it goes through isYoutubeMixPlaylistUrl instead'
+);
+
+assert.strictEqual(
+  isYoutubeMixPlaylistUrl('https://www.youtube.com/watch?v=Bhg-Gw953b0&list=RDEMxGUZ2ZNtqwja6FDPezetCw&start_radio=1'),
+  true,
+  'accepts a Mix/Radio list (list id starts with RD)'
+);
+assert.strictEqual(
+  isYoutubeMixPlaylistUrl('https://www.youtube.com/playlist?list=PLWz5rJ2EKKc9CBxr3BVjPTPoDPLdPIFCE'),
+  false,
+  'a regular playlist id is not a Mix/Radio list'
+);
+assert.strictEqual(isYoutubeMixPlaylistUrl('lofi hip hop radio'), false, 'rejects plain text');
 
 assert.strictEqual(
   extractYoutubePlaylistId('https://www.youtube.com/playlist?list=PLWz5rJ2EKKc9CBxr3BVjPTPoDPLdPIFCE'),
