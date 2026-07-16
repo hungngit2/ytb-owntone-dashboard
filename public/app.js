@@ -22,18 +22,31 @@ function isYoutubeUrl(input) {
   );
 }
 
-// Only a genuine playlist page (youtube.com/playlist?list=X), not a video
-// played *within* a playlist context (watch?v=X&list=Y) — the latter is
-// still just one video and stays on the single-video resolve path, same
-// as yt-dlp's own --no-playlist elsewhere in this app avoids pulling in
-// an entire radio mix/playlist when only one video was actually asked for.
-function isYoutubePlaylistUrl(input) {
-  return /^https?:\/\/(www\.)?youtube\.com\/playlist\?(?:.*&)?list=/i.test(input.trim());
-}
-
 function extractYoutubePlaylistId(url) {
   const match = /[?&]list=([a-zA-Z0-9_-]+)/.exec(url || '');
   return match ? match[1] : null;
+}
+
+// Auto-generated "Mix"/Radio lists (list id starts with RD) aren't real
+// playlists — the YouTube Data API's playlistItems endpoint can't look
+// them up — so they're routed to a separate yt-dlp-backed resolver
+// instead of the Data-API-based playlist import below.
+function isYoutubeMixPlaylistId(id) {
+  return /^RD/i.test(id || '');
+}
+
+// Any URL carrying a `list=` param is treated as "import the whole
+// playlist" — whether it's a dedicated playlist page
+// (youtube.com/playlist?list=X) or a video played within a playlist
+// context (watch?v=X&list=Y). Mix/Radio lists are excluded here since
+// they need the separate resolver above.
+function isYoutubePlaylistUrl(input) {
+  const id = extractYoutubePlaylistId(input);
+  return !!id && !isYoutubeMixPlaylistId(id);
+}
+
+function isYoutubeMixPlaylistUrl(input) {
+  return isYoutubeMixPlaylistId(extractYoutubePlaylistId(input));
 }
 
 // The same video can appear as youtube.com/watch?v=X, youtu.be/X, or with
@@ -84,6 +97,7 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     isYoutubeUrl,
     isYoutubePlaylistUrl,
+    isYoutubeMixPlaylistUrl,
     extractYoutubePlaylistId,
     extractYoutubeVideoId,
     mapPlayerResponse,
@@ -383,11 +397,40 @@ async function resolveUrlToResult(url) {
       } else {
         renderResults();
       }
+      cacheLastSearch(searchResults);
     } else {
       showError((data && data.message) || 'Could not resolve URL');
     }
   } catch (err) {
     showError('Resolve request failed');
+  }
+}
+
+// Mix/Radio lists are dynamically generated and not retrievable via the
+// YouTube Data API, so this goes through the backend's yt-dlp-based
+// flat-playlist resolver instead of fetchYoutubePlaylistItems.
+async function resolveYoutubeMixPlaylist(url) {
+  setActiveTab('search');
+  showLoading('Loading mix...');
+
+  try {
+    const res = await fetch('backend.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `action=resolve_mix_playlist&url=${encodeURIComponent(url)}`,
+    });
+    const data = await res.json();
+
+    if (data && data.status === 'ok' && Array.isArray(data.items) && data.items.length > 0) {
+      searchResults = data.items;
+      renderResults();
+      cacheLastSearch(searchResults);
+      document.getElementById('search-input').value = '';
+    } else {
+      showError((data && data.message) || 'Could not resolve this mix/radio playlist');
+    }
+  } catch (err) {
+    showError('Mix playlist request failed');
   }
 }
 
@@ -1169,7 +1212,9 @@ if (typeof document !== 'undefined') {
     const value = input.value.trim();
     if (!value) return;
 
-    if (isYoutubePlaylistUrl(value)) {
+    if (isYoutubeMixPlaylistUrl(value)) {
+      resolveYoutubeMixPlaylist(value);
+    } else if (isYoutubePlaylistUrl(value)) {
       runPlaylistImport(value);
     } else if (isYoutubeUrl(value)) {
       resolveUrlToResult(value);
