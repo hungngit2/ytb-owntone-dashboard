@@ -1,3 +1,7 @@
+# Excerpt of /opt/docker/owntone/config/owntone.conf (lines ~260-320) —
+# reference only, not installed verbatim by install.sh (see README.md).
+# The leading "}" below closes the preceding, unrelated block
+# (clear_queue_on_stop_disable), not the "audio {}" section that follows.
 }
 
 # Local audio output

@@ -74,6 +74,17 @@ flips on, the watcher starts `pipewire.service` → `wireplumber.service`
 → `ytb-stereo-split-linker.service` (staggered with a 2s gap each); when
 it flips off, it stops them in reverse order.
 
+**Auto-resync for L/R drift:** the two speakers use independent RAOP
+sessions with no shared clock, and confirmed live to gradually drift out
+of sync the longer a session stays connected — toggling the OwnTone
+output off/on (a full reconnect) resets it. The watcher automates this:
+it tracks how long OwnTone's player has been continuously idle (state !=
+`play`), and once that exceeds `IDLE_MINUTES_BEFORE_RESYNC` (in
+`/etc/ytb-stereo-split.conf`, default 15), it cycles the whole PipeWire
+stack — same `stop_stack`/`start_stack` path as the manual toggle, just
+timer-triggered. Gated on idle time specifically so it never interrupts
+an active listening session. Set to `0` to disable.
+
 `libpipewire-module-raop-discover` makes the two AirPlay speakers appear
 as ordinary PipeWire sink nodes (via the same Avahi/mDNS this host already
 runs), so no separate loopback/bridge device is needed to reach them.
