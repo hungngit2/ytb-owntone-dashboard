@@ -5,7 +5,12 @@
 #
 # What this sets up:
 #   - PipeWire + WirePlumber as a system-wide service (not the usual
-#     per-user session — this host is headless)
+#     per-user session — this host is headless) — installed but NOT
+#     enabled at boot. This host is severely memory-constrained (see the
+#     plan doc's "Memory constraints" section — chronic near-total swap
+#     usage from other services even at idle), so PipeWire only runs
+#     while the feature is actually toggled on, started/stopped by a
+#     lightweight watcher (see below) rather than running 24/7.
 #   - snd-aloop: OwnTone's own ALSA output writes real audio to
 #     hw:Loopback,0 whenever "PipeWire - Stereo Pair" is selected in its
 #     UI; PipeWire captures the other side (hw:Loopback,1, exposed as
@@ -15,9 +20,13 @@
 #     note this remains somewhat flaky, see the plan doc's final section)
 #   - PipeWire's RAOP-discover module, so the two AirPlay speakers appear
 #     as PipeWire sinks
-#   - ytb-stereo-split-linker.sh + its systemd service: a persistent loop
-#     that keeps aloop-capture linked directly to the two speakers, split
-#     by channel, self-healing if a speaker joins the network late
+#   - ytb-stereo-split-linker.sh (+ its systemd service, NOT enabled at
+#     boot): keeps aloop-capture linked to the two speakers, split by
+#     channel, while running
+#   - ytb-stereo-split-watcher.sh (+ its systemd service, enabled at
+#     boot): a lightweight poller (plain curl, no PipeWire client
+#     libraries loaded) that starts pipewire+wireplumber+the linker when
+#     the OwnTone toggle is selected, and stops them again when it isn't
 #   - The OwnTone container's docker-compose.yml and owntone.conf
 #
 # What you MUST edit before running:
@@ -64,7 +73,8 @@ chown -R pipewire:pipewire /var/lib/pipewire
 echo "==> Installing systemd units"
 install -m 644 "$SCRIPT_DIR/pipewire.service" /etc/systemd/system/pipewire.service
 install -m 644 "$SCRIPT_DIR/wireplumber.service" /etc/systemd/system/wireplumber.service
-install -m 644 "$SCRIPT_DIR/ytb-stereo-split.service" /etc/systemd/system/ytb-stereo-split.service
+install -m 644 "$SCRIPT_DIR/ytb-stereo-split-linker.service" /etc/systemd/system/ytb-stereo-split-linker.service
+install -m 644 "$SCRIPT_DIR/ytb-stereo-split-watcher.service" /etc/systemd/system/ytb-stereo-split-watcher.service
 
 echo "==> Installing PipeWire config (RAOP discovery, aloop-autoprofile exclusion, capture node)"
 mkdir -p /etc/pipewire/pipewire.conf.d /etc/wireplumber/main.lua.d
@@ -72,8 +82,9 @@ install -m 644 "$SCRIPT_DIR/30-raop-discover.conf" /etc/pipewire/pipewire.conf.d
 install -m 644 "$SCRIPT_DIR/10-aloop-capture.conf" /etc/pipewire/pipewire.conf.d/10-aloop-capture.conf
 install -m 644 "$SCRIPT_DIR/51-disable-aloop-autoprofile.lua" /etc/wireplumber/main.lua.d/51-disable-aloop-autoprofile.lua
 
-echo "==> Installing the stereo-split linker + speaker config"
+echo "==> Installing the stereo-split linker/watcher + speaker config"
 install -m 755 "$SCRIPT_DIR/ytb-stereo-split-linker.sh" /usr/local/bin/ytb-stereo-split-linker.sh
+install -m 755 "$SCRIPT_DIR/ytb-stereo-split-watcher.sh" /usr/local/bin/ytb-stereo-split-watcher.sh
 if [ ! -f /etc/ytb-stereo-split.conf ]; then
   sed -e "s/^MAIN_IP=.*/MAIN_IP=$SPEAKER_MAIN_IP/" \
       -e "s/^SUB_IP=.*/SUB_IP=$SPEAKER_SUB_IP/" \
@@ -83,13 +94,10 @@ else
   echo "    /etc/ytb-stereo-split.conf already exists, leaving it alone"
 fi
 
-echo "==> Enabling PipeWire/WirePlumber/linker services"
+echo "==> Enabling only the watcher at boot (PipeWire/WirePlumber/linker start on demand)"
 systemctl daemon-reload
-systemctl enable --now pipewire.service
-sleep 2
-systemctl enable --now wireplumber.service
-sleep 2
-systemctl enable --now ytb-stereo-split.service
+systemctl disable --now pipewire.service wireplumber.service ytb-stereo-split-linker.service 2>/dev/null
+systemctl enable --now ytb-stereo-split-watcher.service
 
 echo "==> Configuring the OwnTone container (asound.conf softvol wrapper)"
 install -m 644 "$SCRIPT_DIR/asound.conf" "$OWNTONE_COMPOSE_DIR/config/asound.conf"

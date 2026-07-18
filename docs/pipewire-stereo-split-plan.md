@@ -1,5 +1,31 @@
 # Stereo (L/R) split across two AirPlay speakers via PipeWire
 
+## Memory constraints (read this before changing anything)
+
+chainedbox has **under 1GB of total RAM** and runs Home Assistant (~270MB),
+Jellyfin (~175MB), AdGuard Home, Docker, and OwnTone all on the same box.
+Its swap is `zram` (compressed RAM used as swap — it doesn't add real
+capacity, it trades CPU for a little headroom) and sits at **90-99%
+used even at idle**, before this feature does anything. There is
+essentially no memory margin on this host.
+
+During development this surfaced as four full host freezes requiring a
+physical power-cycle, each needing a hard reset because the freeze
+happens before `journald` can flush anything to persistent storage (no
+forensic logs survive — `Storage=volatile` was the default; it's now
+`Storage=persistent`, which will at least help if this happens again).
+The freezes correlated with — but weren't conclusively proven to be
+solely caused by — this feature's added load: PipeWire+WirePlumber's own
+footprint is small in isolation (~20MB combined, confirmed via `ps`), but
+on a host already at 90%+ swap, that plus transient `yt-dlp`/`ffmpeg`
+bursts is enough to tip things over. **Design accordingly: assume there
+is no spare memory, and prefer "runs only when actively needed" over
+"runs 24/7 for convenience" for anything touching this host.** That's
+why PipeWire/WirePlumber are started on-demand by a lightweight watcher
+rather than running as always-on system services — see "Final
+architecture" below.
+
+
 OwnTone streams the same full stereo mix to every selected AirPlay output —
 it has no concept of a "stereo pair" (left channel to one speaker, right to
 another). This adds that without touching this app or OwnTone's own
@@ -18,21 +44,35 @@ reliability caveat on that toggle.
 ## Final architecture (what's actually running)
 
 ```
-OwnTone (unmodified) — ALSA output writes to hw:Loopback,0
-   |                    (only when "PipeWire - Stereo Pair" is selected)
+ytb-stereo-split-watcher.sh (always running, ~5s poll of /api/outputs)
+   |
+   | starts/stops pipewire.service + wireplumber.service +
+   | ytb-stereo-split-linker.service based on whether
+   | "PipeWire - Stereo Pair" is selected
    v
-hw:Loopback,1  (captured by PipeWire as node "aloop-capture")
+OwnTone (unmodified) — ALSA output writes to hw:Loopback,0
+   |                    (only when that output is selected)
+   v
+hw:Loopback,1  (captured by PipeWire as node "aloop-capture",
+                only while PipeWire is running)
    |
    +--- capture_FL --> Phicomm R1 - Main  (RAOP sink, both L+R inputs)
    +--- capture_FR --> Phicomm R1 - Sub   (RAOP sink, both L+R inputs)
 ```
 
-`ytb-stereo-split-linker.sh` runs continuously (not on a toggle-driven
-start/stop cycle) and just re-asserts these two links every 5s if
-they're missing — so it self-heals if a speaker joins the network after
-PipeWire starts, or reconnects after going offline. Whether real audio
-actually flows through is controlled entirely by OwnTone's own output
-selection; nothing else needs to start or stop.
+`ytb-stereo-split-linker.sh` itself re-asserts the two links every 5s
+while running — self-healing if a speaker joins the network late or
+reconnects after going offline. But it, and PipeWire/WirePlumber
+underneath it, are **not** always-on system services — `install.sh`
+installs but does not enable them at boot. Only `ytb-stereo-split-watcher.sh`
+runs 24/7 (enabled, `WantedBy=multi-user.target`), and it's deliberately
+lightweight: a plain `curl` to OwnTone's own API + a tiny `python3` JSON
+parse, no PipeWire client libraries loaded, so the steady-state cost of
+"is this feature available at all" stays close to zero on a host that
+can't spare much (see "Memory constraints" above). When the toggle
+flips on, the watcher starts `pipewire.service` → `wireplumber.service`
+→ `ytb-stereo-split-linker.service` (staggered with a 2s gap each); when
+it flips off, it stops them in reverse order.
 
 `libpipewire-module-raop-discover` makes the two AirPlay speakers appear
 as ordinary PipeWire sink nodes (via the same Avahi/mDNS this host already
@@ -114,11 +154,17 @@ See [docs/pipewire-stereo-split/README.md](pipewire-stereo-split/README.md)
 for the full file list and a one-click `install.sh` for deploying this to
 another host. Summary:
 
-- `/usr/local/bin/ytb-stereo-split-linker.sh` — the persistent linker
-  (see architecture above).
-- `/etc/systemd/system/ytb-stereo-split.service` — runs it, `Restart=always`.
+- `/usr/local/bin/ytb-stereo-split-watcher.sh` +
+  `/etc/systemd/system/ytb-stereo-split-watcher.service` — the only
+  always-on piece (enabled at boot); starts/stops everything else based
+  on the OwnTone toggle.
+- `/usr/local/bin/ytb-stereo-split-linker.sh` +
+  `/etc/systemd/system/ytb-stereo-split-linker.service` — the linker
+  (see architecture above). **Not** enabled at boot; started/stopped by
+  the watcher.
 - `/etc/systemd/system/pipewire.service` / `wireplumber.service` —
   system-wide PipeWire (not the default per-user session — see below).
+  **Not** enabled at boot; started/stopped by the watcher.
 - `/etc/pipewire/pipewire.conf.d/30-raop-discover.conf` — RAOP discovery.
 - `/etc/pipewire/pipewire.conf.d/10-aloop-capture.conf` — the
   `aloop-capture` node the linker connects from (actively required now,
@@ -158,6 +204,18 @@ in the `audio` group) and custom system-level units:
 
 ## Known gotchas / landmines for future maintenance
 
+- **`journald` defaulted to `Storage=volatile` on this host**, meaning a
+  hard freeze wipes its own logs — there is no `journalctl -b -1` to
+  diagnose a crash after the fact. Changed to `Storage=persistent` in
+  `/etc/systemd/journald.conf`, but note this still only helps if the
+  crash allows journald time to flush before power is lost; the freezes
+  seen during this feature's development were hard enough that even
+  after enabling persistence, the next crash still produced no prior-boot
+  journal (confirmed: `/var/log/journal/<id>/system.journal` only
+  contained the fresh boot). Don't assume forensic logs will be there.
+- **This host has essentially no memory margin** — see "Memory
+  constraints" at the top of this doc. Treat any new always-on process
+  as a real cost, not a rounding error.
 - **`pkill -f`/`pgrep -f <pattern>` can match the invoking shell's own
   command line** if the pattern text is a substring of the ssh/bash
   command that invokes it (e.g. `pkill -f "stream.mp3"` killing the SSH

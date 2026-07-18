@@ -7,8 +7,16 @@ folder is the source of truth for what's actually running.
 
 **Known limitation:** toggling "PipeWire - Stereo Pair" in OwnTone's UI
 is not 100% reliable — see the plan doc's final section. Selecting it
-sometimes fails with a 400 (retry once or twice — it usually succeeds).
-Once selected, the actual audio path is solid.
+sometimes fails with a 400 (retry, or briefly hold the loopback PCM open
+from another process — see the plan doc's mixer-race writeup). Once
+selected, the actual audio path is solid.
+
+**This host is severely memory-constrained** (under 1GB RAM, chronic
+near-total swap usage from other unrelated services even at idle — see
+the plan doc's "Memory constraints" section). PipeWire/WirePlumber are
+NOT run 24/7 as a result — they start only while the feature is actually
+toggled on, via a lightweight watcher, and stop again when it's toggled
+off, to avoid holding memory this host doesn't reliably have to spare.
 
 ## Install
 
@@ -24,25 +32,30 @@ isn't already in place, and skips restarting OwnTone if it's mid-playback.
 ## Architecture (final)
 
 OwnTone's own ALSA output writes to `hw:Loopback,0` (gated entirely by
-whether "PipeWire - Stereo Pair" is selected in OwnTone's UI — no
-separate process to start/stop). `ytb-stereo-split-linker.sh` runs
-continuously and keeps `aloop-capture` (the loopback's other side,
-captured by PipeWire) linked directly to the two AirPlay speakers, split
-by channel. No stream-pulling `ffmpeg` process is needed — an earlier
-version of this used one, but it caused OwnTone's own playback to
-intermittently self-pause (a second concurrent subscriber conflicting
-with an already-active ALSA session) and added an unnecessary MP3
-encode/decode round-trip. This version is direct PCM passthrough.
+whether "PipeWire - Stereo Pair" is selected in OwnTone's UI).
+`ytb-stereo-split-watcher.sh` runs 24/7 (it's cheap — a plain `curl` poll
+every 5s, no PipeWire client libraries loaded) and starts/stops
+`pipewire.service` + `wireplumber.service` + `ytb-stereo-split-linker.service`
+based on that toggle. The linker itself keeps `aloop-capture` (the
+loopback's other side, captured by PipeWire) linked directly to the two
+AirPlay speakers, split by channel, for as long as it's running. No
+stream-pulling `ffmpeg` process is needed — an earlier version of this
+used one, but it caused OwnTone's own playback to intermittently
+self-pause (a second concurrent subscriber conflicting with an
+already-active ALSA session) and added an unnecessary MP3 encode/decode
+round-trip. This version is direct PCM passthrough.
 
 ## Files
 
 | File | Installed to |
 |---|---|
+| `ytb-stereo-split-watcher.sh` | `/usr/local/bin/ytb-stereo-split-watcher.sh` — always running, starts/stops everything else |
+| `ytb-stereo-split-watcher.service` | `/etc/systemd/system/ytb-stereo-split-watcher.service` — enabled at boot |
 | `ytb-stereo-split-linker.sh` | `/usr/local/bin/ytb-stereo-split-linker.sh` |
+| `ytb-stereo-split-linker.service` | `/etc/systemd/system/ytb-stereo-split-linker.service` — **not** enabled at boot, started/stopped by the watcher |
 | `ytb-stereo-split.conf` | `/etc/ytb-stereo-split.conf` — speaker IPs, edit here to change assignment |
-| `ytb-stereo-split.service` | `/etc/systemd/system/ytb-stereo-split.service` |
-| `pipewire.service` | `/etc/systemd/system/pipewire.service` |
-| `wireplumber.service` | `/etc/systemd/system/wireplumber.service` |
+| `pipewire.service` | `/etc/systemd/system/pipewire.service` — **not** enabled at boot, started/stopped by the watcher |
+| `wireplumber.service` | `/etc/systemd/system/wireplumber.service` — **not** enabled at boot, started/stopped by the watcher |
 | `30-raop-discover.conf` | `/etc/pipewire/pipewire.conf.d/30-raop-discover.conf` |
 | `10-aloop-capture.conf` | `/etc/pipewire/pipewire.conf.d/10-aloop-capture.conf` — the `aloop-capture` node the linker connects from |
 | `51-disable-aloop-autoprofile.lua` | `/etc/wireplumber/main.lua.d/51-disable-aloop-autoprofile.lua` |
