@@ -242,6 +242,36 @@ assert_true(
     'queue_should_advance is false when the pipeline exited but progress is still 0 — never actually started, not "finished"'
 );
 
+// Direct-HTTP ("url") tracks: OwnTone wipes the player to a blank idle
+// state at natural end-of-stream instead of pausing with the item
+// retained, unlike a pipe track — the blank shape below is otherwise
+// identical to "hasn't started playing yet".
+$idlePlayer = ['state' => 'stop', 'item_progress_ms' => 0, 'item_length_ms' => 0, 'item_id' => 0];
+assert_true(
+    !queue_should_advance($idlePlayer, 0, 3, true, false),
+    'queue_should_advance stays false on a blank idle player if this item was never confirmed playing (still starting up, not finished)'
+);
+assert_true(
+    queue_should_advance($idlePlayer, 0, 3, true, true),
+    'queue_should_advance is true on a blank idle player once this item was confirmed playing first (a url track finished)'
+);
+
+$tmpConfirmedFile = sys_get_temp_dir() . '/backend_test_confirmed_' . uniqid() . '.json';
+reset_confirmed_playing($tmpConfirmedFile);
+assert_true(
+    !mark_confirmed_playing_if_active($idlePlayer, $tmpConfirmedFile),
+    'mark_confirmed_playing_if_active reports false right after a reset, while the player is still idle'
+);
+assert_true(
+    mark_confirmed_playing_if_active(['state' => 'play', 'item_progress_ms' => 500], $tmpConfirmedFile),
+    'mark_confirmed_playing_if_active reports (and records) true once the player is actually playing'
+);
+assert_true(
+    mark_confirmed_playing_if_active($idlePlayer, $tmpConfirmedFile),
+    'mark_confirmed_playing_if_active keeps reporting true afterwards, even once the player has since gone idle'
+);
+unlink($tmpConfirmedFile);
+
 assert_true(next_queue_index(0, 3, false) === 1, 'next_queue_index (sequential) moves forward by one');
 assert_true(next_queue_index(2, 3, false) === null, 'next_queue_index (sequential) stops at the end of the queue');
 assert_true(next_queue_index(0, 1, true) === null, 'next_queue_index (shuffle) has nowhere to go with only one item');
