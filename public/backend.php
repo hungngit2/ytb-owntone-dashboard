@@ -695,6 +695,28 @@ function handle_resolve_url(string $url): void
     ]);
 }
 
+// Resolves a track straight to its underlying CDN URL — lets the frontend
+// open the actual audio stream directly in a new tab, bypassing OwnTone
+// entirely (distinct from resolve_direct_stream_url's use in play_url_body,
+// which feeds that same URL to OwnTone's own queue instead).
+function handle_resolve_stream(string $url): void
+{
+    if (!is_youtube_url($url)) {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'message' => 'not a valid YouTube URL']);
+        return;
+    }
+
+    $streamUrl = resolve_direct_stream_url($url);
+    if ($streamUrl === null) {
+        http_response_code(502);
+        echo json_encode(['status' => 'error', 'message' => 'could not resolve a direct stream url']);
+        return;
+    }
+
+    echo json_encode(['status' => 'ok', 'stream_url' => $streamUrl]);
+}
+
 // Auto-generated Mix/Radio lists (list=RD...) are dynamically built per
 // viewer and aren't retrievable via the YouTube Data API's playlistItems
 // endpoint (the client-side resolver used for real playlists) — yt-dlp
@@ -1379,6 +1401,8 @@ if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
         handle_resolve_url((string) ($_POST['url'] ?? ''));
     } elseif ($action === 'resolve_mix_playlist') {
         handle_resolve_mix_playlist((string) ($_POST['url'] ?? ''));
+    } elseif ($action === 'resolve_stream') {
+        handle_resolve_stream((string) ($_POST['url'] ?? ''));
     } else {
         http_response_code(400);
         echo json_encode(['status' => 'error', 'message' => 'unknown action']);

@@ -1366,11 +1366,47 @@ if (typeof document !== 'undefined') {
     btn.classList.toggle('active', !audio.muted);
   });
 
-  document.getElementById('disc').addEventListener('click', () => {
+  function currentWebpageUrl() {
     const queueItem = currentQueueItem();
-    const webpageUrl = currentTrackInfo.webpageUrl || (queueItem && queueItem.webpage_url);
+    return currentTrackInfo.webpageUrl || (queueItem && queueItem.webpage_url) || null;
+  }
+
+  document.getElementById('now-title-text').addEventListener('click', () => {
+    const webpageUrl = currentWebpageUrl();
     if (webpageUrl) {
       window.open(webpageUrl, '_blank', 'noopener');
+    }
+  });
+
+  // Opens the raw CDN audio URL directly, bypassing OwnTone entirely — a
+  // fresh yt-dlp resolve (same one play_url_body itself does), so a blank
+  // tab is opened synchronously with the click first and only navigated
+  // once the resolve responds, or popup blockers would kill a tab opened
+  // from inside the async fetch callback instead.
+  document.getElementById('disc').addEventListener('click', async () => {
+    const webpageUrl = currentWebpageUrl();
+    if (!webpageUrl) {
+      return;
+    }
+    const tab = window.open('', '_blank', 'noopener');
+    try {
+      const res = await fetch('backend.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `action=resolve_stream&url=${encodeURIComponent(webpageUrl)}`,
+      });
+      const data = await res.json();
+      if (data.status === 'ok' && tab) {
+        tab.location = data.stream_url;
+      } else if (tab) {
+        tab.close();
+        showError(data.message || 'Could not resolve direct stream');
+      }
+    } catch (err) {
+      if (tab) {
+        tab.close();
+      }
+      showError('Could not resolve direct stream');
     }
   });
 
