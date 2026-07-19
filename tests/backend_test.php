@@ -62,6 +62,11 @@ assert_true(extract_youtube_video_id('not a youtube url') === null, 'returns nul
 assert_true(audio_cache_path('https://youtu.be/dQw4w9WgXcQ', '/tmp/cache') === '/tmp/cache/dQw4w9WgXcQ.audio', 'audio_cache_path builds a path keyed by video id');
 assert_true(audio_cache_path('not a url', '/tmp/cache') === null, 'audio_cache_path returns null when no video id can be extracted');
 
+$resolveCmd = build_resolve_direct_stream_url_cmd('https://youtu.be/dQw4w9WgXcQ');
+assert_true(str_contains($resolveCmd, YTDLP_BIN . ' --no-playlist -f bestaudio -g'), 'resolve cmd asks yt-dlp for the direct bestaudio url via -g');
+assert_true(str_starts_with($resolveCmd, TIMEOUT_BIN), 'resolve cmd is guarded by an absolute-path timeout');
+assert_true(str_contains($resolveCmd, "'https://youtu.be/dQw4w9WgXcQ'"), 'resolve cmd embeds the target url');
+
 $queueItems = [
     ['webpage_url' => 'https://youtu.be/aaaaaaaaaaa'],
     ['webpage_url' => 'https://youtu.be/bbbbbbbbbbb'],

@@ -23,7 +23,7 @@ define('YOUTUBE_FIFO_PATH', '/mnt/appsrv/ytb-owntone/pipes/youtube.fifo');
 define('YOUTUBE_FIFO_MATCH', 'youtube');
 // Path as OwnTone sees it inside its container/library config — distinct from
 // YOUTUBE_FIFO_PATH, which is the host path used to write the audio stream.
-define('OWNTONE_PIPE_DIRECTORY', '/srv/music/pipes');
+define('OWNTONE_PIPE_DIRECTORY', '/mnt/appsrv/ytb-owntone/pipes');
 // Absolute path outside nginx's document root, which on the deployed host
 // (root /mnt/appsrv/www;) covers this app's whole parent directory — a
 // relative "../data" would land inside /mnt/appsrv/www/data and be directly
@@ -788,6 +788,134 @@ function stop_existing_pipeline(): void
     shell_exec('pkill -9 -f ' . escapeshellarg(OUR_FFMPEG_PATTERN) . ' 2>/dev/null');
 }
 
+// Resolves a video straight to its underlying CDN audio URL — no download,
+// just format-selection metadata (same -f bestaudio selector already used
+// for the fifo/preload pipeline). See resolve_direct_stream_url for why this
+// is tried before falling back to the fifo pipeline at all.
+function build_resolve_direct_stream_url_cmd(string $youtubeUrl): string
+{
+    return sprintf(
+        '%s 15 %s --no-playlist -f bestaudio -g %s 2>/dev/null',
+        TIMEOUT_BIN,
+        YTDLP_BIN,
+        escapeshellarg($youtubeUrl)
+    );
+}
+
+function resolve_direct_stream_url(string $youtubeUrl): ?string
+{
+    $out = trim((string) shell_exec(build_resolve_direct_stream_url_cmd($youtubeUrl)));
+    $firstLine = trim(strtok($out, "\n") ?: '');
+    return preg_match('#^https?://#i', $firstLine) ? $firstLine : null;
+}
+
+function owntone_post_status(string $path): int
+{
+    $ch = curl_init(OWNTONE_BASE . $path);
+    curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'POST');
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+    curl_exec($ch);
+    $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    return $status;
+}
+
+// Handing OwnTone the resolved CDN URL directly (as a plain DATA_KIND_HTTP
+// stream item) skips the whole fifo/ffmpeg/named-pipe pipeline entirely —
+// OwnTone fetches and decodes it itself. Returns null (not an error array)
+// on any failure so the caller falls back to the fifo pipeline instead of
+// surfacing this as a user-facing error.
+function attempt_direct_http_play(string $youtubeUrl, string $title, string $channel, string $thumbnailUrl): ?array
+{
+    $streamUrl = resolve_direct_stream_url($youtubeUrl);
+    if ($streamUrl === null) {
+        return null;
+    }
+
+    $httpStatus = owntone_post_status('/api/queue/items/add?uris=' . rawurlencode($streamUrl) . '&clear=true&playback=start');
+    if ($httpStatus < 200 || $httpStatus >= 300) {
+        return null;
+    }
+
+    // The add call only enqueues it — a bad/expired URL or a CDN 403 only
+    // surfaces once OwnTone actually tries to open the stream, which shows
+    // up here as playback immediately stopping again rather than as an
+    // error from the add call itself.
+    usleep(700000);
+    $player = owntone_get('/api/player');
+    if (($player['state'] ?? '') !== 'play') {
+        owntone_put('/api/player/stop');
+        return null;
+    }
+
+    // OwnTone has no tags to scan from a bare CDN url, so metadata (title
+    // shown in its UI/AirPlay clients) has to be set explicitly here —
+    // unlike the fifo path, this needs no shairport-style metadata pipe.
+    $metaQuery = array_filter([
+        'title' => $title !== '' ? $title : null,
+        'artist' => $channel !== '' ? $channel : null,
+        'artwork_url' => $thumbnailUrl !== '' ? $thumbnailUrl : null,
+    ]);
+    if (!empty($metaQuery)) {
+        owntone_put('/api/queue/items/now_playing?' . http_build_query($metaQuery));
+    }
+
+    return [
+        'status' => 'ok',
+        'title' => $title ?: null,
+        'thumbnail' => $thumbnailUrl ?: null,
+        'channel' => $channel ?: null,
+    ];
+}
+
+// The fifo pipeline: yt-dlp|ffmpeg transcodes into a named pipe OwnTone
+// reads as a library track, with a second named pipe carrying shairport-
+// style metadata (title/artist/artwork/progress) alongside it. Kept as the
+// fallback for whatever attempt_direct_http_play can't handle (a CDN 403,
+// or any seek — direct-HTTP playback has no local seek support).
+function play_via_pipe(string $url, int $startAtSeconds, ?string $cachedAudioPath, string $title, string $channel, string $thumbnailUrl): array
+{
+    $tracks = owntone_get('/api/library/files?directory=' . rawurlencode(OWNTONE_PIPE_DIRECTORY));
+    $trackId = extract_track_id_from_tracks_json($tracks, YOUTUBE_FIFO_MATCH);
+
+    if ($trackId === null) {
+        return ['status' => 'error', 'message' => 'pipe track not found in OwnTone library'];
+    }
+
+    $durationSeconds = (int) round((float) trim((string) shell_exec(build_yt_dlp_duration_cmd($url))));
+    $artworkBytes = $thumbnailUrl !== '' ? fetch_url_bytes($thumbnailUrl) : '';
+
+    // Queue + start playback BEFORE launching the pipeline, so the new
+    // queue item already exists by the time metadata arrives on the pipe.
+    // OwnTone applies incoming metadata to whatever item is currently
+    // active — if that call happens after the metadata write (as it did
+    // when the frontend made this call separately, later), the metadata
+    // lands on the stale previous item instead of this one.
+    owntone_post('/api/queue/items/add?uris=library:track:' . $trackId . '&clear=true&playback=start');
+
+    $metadataFifoPath = YOUTUBE_FIFO_PATH . '.metadata';
+    ensure_metadata_pipe_exists($metadataFifoPath);
+    $metadataXml = build_pipe_metadata_xml($title, $channel, $durationSeconds, $artworkBytes, $startAtSeconds);
+
+    shell_exec(build_play_pipeline_cmd($url, YOUTUBE_FIFO_PATH, $metadataFifoPath, $metadataXml, $cachedAudioPath, $startAtSeconds));
+
+    // Not cached yet (fresh live-streamed play): fetch a full copy in the
+    // background so this track becomes seekable a little while into
+    // playback, without delaying the start of playback itself.
+    if ($cachedAudioPath === null) {
+        ensure_current_track_cached($url);
+    }
+
+    return [
+        'status' => 'ok',
+        'track_id' => $trackId,
+        'title' => $title ?: null,
+        'thumbnail' => $thumbnailUrl ?: null,
+        'channel' => $channel ?: null,
+    ];
+}
+
 function play_url(string $url, int $startAtSeconds = 0): array
 {
     if (!is_youtube_url($url)) {
@@ -808,48 +936,25 @@ function play_url(string $url, int $startAtSeconds = 0): array
     return with_playback_lock(function () use ($url, $startAtSeconds, $cachedAudioPath) {
         stop_existing_pipeline();
 
-        $tracks = owntone_get('/api/library/files?directory=' . rawurlencode(OWNTONE_PIPE_DIRECTORY));
-        $trackId = extract_track_id_from_tracks_json($tracks, YOUTUBE_FIFO_MATCH);
-
-        if ($trackId === null) {
-            return ['status' => 'error', 'message' => 'pipe track not found in OwnTone library'];
-        }
-
         $oembed = fetch_youtube_oembed($url);
         $title = $oembed['title'] ?? '';
         $channel = $oembed['author_name'] ?? '';
         $thumbnailUrl = $oembed['thumbnail_url'] ?? '';
-        $durationSeconds = (int) round((float) trim((string) shell_exec(build_yt_dlp_duration_cmd($url))));
-        $artworkBytes = $thumbnailUrl !== '' ? fetch_url_bytes($thumbnailUrl) : '';
 
-        // Queue + start playback BEFORE launching the pipeline, so the new
-        // queue item already exists by the time metadata arrives on the pipe.
-        // OwnTone applies incoming metadata to whatever item is currently
-        // active — if that call happens after the metadata write (as it did
-        // when the frontend made this call separately, later), the metadata
-        // lands on the stale previous item instead of this one.
-        owntone_post('/api/queue/items/add?uris=library:track:' . $trackId . '&clear=true&playback=start');
-
-        $metadataFifoPath = YOUTUBE_FIFO_PATH . '.metadata';
-        ensure_metadata_pipe_exists($metadataFifoPath);
-        $metadataXml = build_pipe_metadata_xml($title, $channel, $durationSeconds, $artworkBytes, $startAtSeconds);
-
-        shell_exec(build_play_pipeline_cmd($url, YOUTUBE_FIFO_PATH, $metadataFifoPath, $metadataXml, $cachedAudioPath, $startAtSeconds));
-
-        // Not cached yet (fresh live-streamed play): fetch a full copy in the
-        // background so this track becomes seekable a little while into
-        // playback, without delaying the start of playback itself.
-        if ($cachedAudioPath === null) {
-            ensure_current_track_cached($url);
+        // Seeks always go through the fifo/cached-file path below. A fresh
+        // play tries the simpler direct-HTTP path first, falling back to
+        // the fifo pipeline only if OwnTone can't open the resolved URL.
+        if ($startAtSeconds === 0) {
+            $direct = attempt_direct_http_play($url, $title, $channel, $thumbnailUrl);
+            if ($direct !== null) {
+                if ($cachedAudioPath === null) {
+                    ensure_current_track_cached($url);
+                }
+                return $direct;
+            }
         }
 
-        return [
-            'status' => 'ok',
-            'track_id' => $trackId,
-            'title' => $title ?: null,
-            'thumbnail' => $thumbnailUrl ?: null,
-            'channel' => $channel ?: null,
-        ];
+        return play_via_pipe($url, $startAtSeconds, $cachedAudioPath, $title, $channel, $thumbnailUrl);
     });
 }
 
