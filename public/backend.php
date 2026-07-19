@@ -839,12 +839,20 @@ function attempt_direct_http_play(string $youtubeUrl, string $title, string $cha
     }
 
     // The add call only enqueues it — a bad/expired URL or a CDN 403 only
-    // surfaces once OwnTone actually tries to open the stream, which shows
-    // up here as playback immediately stopping again rather than as an
-    // error from the add call itself.
-    usleep(700000);
-    $player = owntone_get('/api/player');
-    if (($player['state'] ?? '') !== 'play') {
+    // surfaces once OwnTone actually tries to open and probe the stream,
+    // which takes noticeably longer than a local pipe (confirmed live: up
+    // to a couple seconds before state flips from its initial "pause" to
+    // "play"), so this polls for a bit rather than judging on one snapshot.
+    $isPlaying = false;
+    for ($i = 0; $i < 8; $i++) {
+        usleep(500000);
+        $player = owntone_get('/api/player');
+        if (($player['state'] ?? '') === 'play') {
+            $isPlaying = true;
+            break;
+        }
+    }
+    if (!$isPlaying) {
         owntone_put('/api/player/stop');
         return null;
     }
