@@ -8,6 +8,7 @@ const {
   mapPlayerResponse,
   mapQueueResponse,
   sanitizeVolume,
+  isPrivateLocalHost,
 } = require('../public/app.js');
 
 assert.strictEqual(isYoutubeUrl('https://www.youtube.com/watch?v=abc123'), true, 'accepts watch url');
@@ -95,6 +96,16 @@ assert.strictEqual(sanitizeVolume(773094144), null, 'rejects an out-of-range val
 assert.strictEqual(sanitizeVolume(-1), null, 'rejects a negative value');
 assert.strictEqual(sanitizeVolume(NaN), null, 'rejects NaN');
 assert.strictEqual(sanitizeVolume('50'), null, 'rejects a non-number');
+
+assert.strictEqual(isPrivateLocalHost('localhost'), true, 'localhost is private');
+assert.strictEqual(isPrivateLocalHost('127.0.0.1'), true, '127.0.0.1 is private');
+assert.strictEqual(isPrivateLocalHost('10.0.0.100'), true, '10.x is private (chainedbox\'s own LAN address)');
+assert.strictEqual(isPrivateLocalHost('192.168.1.50'), true, '192.168.x is private');
+assert.strictEqual(isPrivateLocalHost('172.16.0.5'), true, '172.16.x is private');
+assert.strictEqual(isPrivateLocalHost('172.31.255.255'), true, '172.31.x is private (top of the 172.16-31 range)');
+assert.strictEqual(isPrivateLocalHost('172.32.0.1'), false, '172.32.x is public (just outside the 172.16-31 private range)');
+assert.strictEqual(isPrivateLocalHost('lotus.ddns.net'), false, 'a public dyndns hostname is not private');
+assert.strictEqual(isPrivateLocalHost('example.com'), false, 'a public domain is not private');
 
 const garbageVolumePlayer = mapPlayerResponse({ state: 'stop', item_progress_ms: 0, item_length_ms: 0, volume: 773094144, item_id: null });
 assert.strictEqual(garbageVolumePlayer.volume, null, 'mapPlayerResponse sanitizes an out-of-range volume to null');

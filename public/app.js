@@ -103,6 +103,7 @@ if (typeof module !== 'undefined' && module.exports) {
     mapPlayerResponse,
     mapQueueResponse,
     sanitizeVolume,
+    isPrivateLocalHost,
   };
 }
 
@@ -650,8 +651,27 @@ function showLoading(message) {
   list.appendChild(wrap);
 }
 
+// Direct port access (http://host:3689) only works on the LAN — a remote/
+// public hostname needs an nginx reverse-proxy path instead (3689 isn't
+// port-forwarded, and an https page can't call a plain http origin anyway).
+// Assumes nginx proxies /owntone/ -> 127.0.0.1:3689 and /owntone-ws/ ->
+// 127.0.0.1:3688 (OwnTone's separate websocket port) for non-local hosts.
+function isPrivateLocalHost(hostname) {
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname) ||
+    /^192\.168\.\d{1,3}\.\d{1,3}$/.test(hostname) ||
+    /^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(hostname)
+  );
+}
+
 function owntoneBase() {
-  return `http://${window.location.hostname}:3689`;
+  const hostname = window.location.hostname;
+  if (isPrivateLocalHost(hostname)) {
+    return `http://${hostname}:3689`;
+  }
+  return `https://${hostname}/owntone`;
 }
 
 let currentTrackInfo = { title: null, thumbnail: null, channel: null, webpageUrl: null };
@@ -1185,7 +1205,11 @@ async function connectWebSocket() {
     return;
   }
 
-  const ws = new WebSocket(`ws://${window.location.hostname}:${websocketPort}/`, 'notify');
+  const hostname = window.location.hostname;
+  const wsUrl = isPrivateLocalHost(hostname)
+    ? `ws://${hostname}:${websocketPort}/`
+    : `wss://${hostname}/owntone-ws/`;
+  const ws = new WebSocket(wsUrl, 'notify');
 
   ws.addEventListener('open', () => {
     statusEl.classList.add('ws-connected');
