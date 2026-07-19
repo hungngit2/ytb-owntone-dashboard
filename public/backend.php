@@ -38,6 +38,10 @@ define('QUEUE_STATE_FILE', '/mnt/appsrv/ytb-owntone/data/queue_state.json');
 // playing — see queue_should_advance's third signal for why this matters
 // specifically for direct-HTTP tracks.
 define('CONFIRMED_PLAYING_FILE', '/mnt/appsrv/ytb-owntone/data/confirmed_playing.json');
+// Caches the last successful direct-HTTP resolve (youtube url -> CDN url) —
+// handle_stream_redirect reuses it instead of re-running yt-dlp from
+// scratch when the clicked track is the one already resolved for playback.
+define('RESOLVED_STREAM_CACHE_FILE', '/mnt/appsrv/ytb-owntone/data/resolved_stream.json');
 // Holds at most one pre-downloaded "next track" audio file at a time (see
 // maybe_preload_next) — outside the web root like the other data paths.
 define('AUDIO_CACHE_DIR', '/mnt/appsrv/ytb-owntone/cache');
@@ -713,7 +717,13 @@ function handle_stream_redirect(string $url): void
         return;
     }
 
-    $streamUrl = resolve_direct_stream_url($url);
+    // Reuse whatever attempt_direct_http_play already resolved for this
+    // exact track at play time — this is almost always a click on the
+    // currently-playing track's thumbnail, so this skips a redundant
+    // yt-dlp invocation (the slow part) in the common case. Falls back to
+    // a fresh resolve for anything else (a fifo-fallback track, a track
+    // that isn't currently playing, or nothing cached yet).
+    $streamUrl = get_cached_stream_url($url) ?? resolve_direct_stream_url($url);
     if ($streamUrl === null) {
         http_response_code(502);
         echo 'could not resolve a direct stream url';
@@ -929,6 +939,27 @@ function resolve_direct_stream_url(string $youtubeUrl): ?string
     return preg_match('#^https?://#i', $firstLine) ? $firstLine : null;
 }
 
+function cache_resolved_stream_url(string $youtubeUrl, string $streamUrl, string $path = RESOLVED_STREAM_CACHE_FILE): void
+{
+    $dir = dirname($path);
+    if (!is_dir($dir)) {
+        mkdir($dir, 0755, true);
+    }
+    file_put_contents($path, json_encode(['youtube_url' => $youtubeUrl, 'stream_url' => $streamUrl]));
+}
+
+// Only returns a hit for the exact url last resolved — anything else (a
+// different track, or nothing cached yet) is a miss, letting the caller
+// fall back to a fresh resolve.
+function get_cached_stream_url(string $youtubeUrl, string $path = RESOLVED_STREAM_CACHE_FILE): ?string
+{
+    $cached = read_json_file($path);
+    if (($cached['youtube_url'] ?? null) !== $youtubeUrl) {
+        return null;
+    }
+    return $cached['stream_url'] ?? null;
+}
+
 function owntone_request_status(string $path, string $method): int
 {
     $ch = curl_init(OWNTONE_BASE . $path);
@@ -981,6 +1012,8 @@ function attempt_direct_http_play(string $youtubeUrl, string $title, string $cha
         owntone_put('/api/player/stop');
         return null;
     }
+
+    cache_resolved_stream_url($youtubeUrl, $streamUrl);
 
     // OwnTone has no tags to scan from a bare CDN url, so metadata (title
     // shown in its UI/AirPlay clients) has to be set explicitly here —
