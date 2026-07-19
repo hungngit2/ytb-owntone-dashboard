@@ -695,26 +695,32 @@ function handle_resolve_url(string $url): void
     ]);
 }
 
-// Resolves a track straight to its underlying CDN URL — lets the frontend
-// open the actual audio stream directly in a new tab, bypassing OwnTone
-// entirely (distinct from resolve_direct_stream_url's use in play_url_body,
-// which feeds that same URL to OwnTone's own queue instead).
-function handle_resolve_stream(string $url): void
+// Resolves a track straight to its underlying CDN URL and 302s there — lets
+// the frontend open the actual audio stream directly in a new tab
+// (bypassing OwnTone entirely) as a plain GET-navigable link, rather than a
+// fetch()+window.open('', ...).location JS round-trip. That round-trip
+// looked fine locally but confirmed live: browsers increasingly treat
+// setting .location on a window opened earlier in the same click handler
+// as an untrusted delayed navigation and silently block it once real
+// async time (the fetch) has passed — a plain synchronous window.open() of
+// a real URL, whose resolution happens server-side before the redirect,
+// doesn't hit that heuristic at all.
+function handle_stream_redirect(string $url): void
 {
     if (!is_youtube_url($url)) {
         http_response_code(400);
-        echo json_encode(['status' => 'error', 'message' => 'not a valid YouTube URL']);
+        echo 'not a valid YouTube URL';
         return;
     }
 
     $streamUrl = resolve_direct_stream_url($url);
     if ($streamUrl === null) {
         http_response_code(502);
-        echo json_encode(['status' => 'error', 'message' => 'could not resolve a direct stream url']);
+        echo 'could not resolve a direct stream url';
         return;
     }
 
-    echo json_encode(['status' => 'ok', 'stream_url' => $streamUrl]);
+    header('Location: ' . $streamUrl, true, 302);
 }
 
 // Auto-generated Mix/Radio lists (list=RD...) are dynamically built per
@@ -1355,6 +1361,13 @@ function advance_queue_if_finished(): void
 }
 
 if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
+    // A real browser-navigable GET route (window.open target), not a JSON
+    // POST action like everything else below — see handle_stream_redirect.
+    if (($_GET['action'] ?? '') === 'stream_redirect') {
+        handle_stream_redirect((string) ($_GET['url'] ?? ''));
+        return;
+    }
+
     header('Content-Type: application/json');
     $action = $_POST['action'] ?? '';
 
