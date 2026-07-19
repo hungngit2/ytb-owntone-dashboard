@@ -302,6 +302,22 @@ assert_true(
 
 unlink($tmpConfirmedFile);
 
+$tmpStreamCacheFile = sys_get_temp_dir() . '/backend_test_stream_cache_' . uniqid() . '.json';
+assert_true(
+    get_cached_stream_url('https://youtu.be/aaa', $tmpStreamCacheFile) === null,
+    'get_cached_stream_url is a miss when nothing has been cached yet'
+);
+cache_resolved_stream_url('https://youtu.be/aaa', 'https://cdn.example/aaa.m4a', $tmpStreamCacheFile);
+assert_true(
+    get_cached_stream_url('https://youtu.be/aaa', $tmpStreamCacheFile) === 'https://cdn.example/aaa.m4a',
+    'get_cached_stream_url hits for the exact url just cached'
+);
+assert_true(
+    get_cached_stream_url('https://youtu.be/bbb', $tmpStreamCacheFile) === null,
+    'get_cached_stream_url is a miss for a different url than the one cached'
+);
+unlink($tmpStreamCacheFile);
+
 assert_true(next_queue_index(0, 3, false) === 1, 'next_queue_index (sequential) moves forward by one');
 assert_true(next_queue_index(2, 3, false) === null, 'next_queue_index (sequential) stops at the end of the queue');
 assert_true(next_queue_index(0, 1, true) === null, 'next_queue_index (shuffle) has nowhere to go with only one item');
