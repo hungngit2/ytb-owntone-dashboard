@@ -1388,7 +1388,13 @@ if (typeof document !== 'undefined') {
     if (!webpageUrl) {
       return;
     }
-    const tab = window.open('', '_blank', 'noopener');
+    // No 'noopener' here — that makes window.open() return null in modern
+    // browsers (confirmed live: the tab stayed on about:blank forever
+    // because `tab` was always null), and we need the reference back to
+    // navigate it once the resolve responds. Not a tabnabbing risk anyway:
+    // the destination is a raw CDN media url, not an HTML page that could
+    // run JS against window.opener.
+    const tab = window.open('', '_blank');
     try {
       const res = await fetch('backend.php', {
         method: 'POST',
