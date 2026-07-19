@@ -1378,41 +1378,20 @@ if (typeof document !== 'undefined') {
     }
   });
 
-  // Opens the raw CDN audio URL directly, bypassing OwnTone entirely — a
-  // fresh yt-dlp resolve (same one play_url_body itself does), so a blank
-  // tab is opened synchronously with the click first and only navigated
-  // once the resolve responds, or popup blockers would kill a tab opened
-  // from inside the async fetch callback instead.
-  document.getElementById('disc').addEventListener('click', async () => {
+  // Opens the raw CDN audio URL directly, bypassing OwnTone entirely.
+  // window.open() here targets backend.php's stream_redirect route (a real
+  // GET, server-side yt-dlp resolve + 302) rather than fetching the url in
+  // JS and setting .location on a pre-opened tab — that async round-trip
+  // looked fine locally but confirmed live: browsers increasingly block
+  // navigating a window opened earlier in the same click handler once real
+  // async time (the fetch) has passed, treating it as an untrusted delayed
+  // navigation. A synchronous window.open() of a real URL isn't subject to
+  // that at all — the resolve delay just becomes normal page-load time in
+  // the new tab.
+  document.getElementById('disc').addEventListener('click', () => {
     const webpageUrl = currentWebpageUrl();
-    if (!webpageUrl) {
-      return;
-    }
-    // No 'noopener' here — that makes window.open() return null in modern
-    // browsers (confirmed live: the tab stayed on about:blank forever
-    // because `tab` was always null), and we need the reference back to
-    // navigate it once the resolve responds. Not a tabnabbing risk anyway:
-    // the destination is a raw CDN media url, not an HTML page that could
-    // run JS against window.opener.
-    const tab = window.open('', '_blank');
-    try {
-      const res = await fetch('backend.php', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `action=resolve_stream&url=${encodeURIComponent(webpageUrl)}`,
-      });
-      const data = await res.json();
-      if (data.status === 'ok' && tab) {
-        tab.location = data.stream_url;
-      } else if (tab) {
-        tab.close();
-        showError(data.message || 'Could not resolve direct stream');
-      }
-    } catch (err) {
-      if (tab) {
-        tab.close();
-      }
-      showError('Could not resolve direct stream');
+    if (webpageUrl) {
+      window.open(`backend.php?action=stream_redirect&url=${encodeURIComponent(webpageUrl)}`, '_blank');
     }
   });
 
