@@ -1366,6 +1366,14 @@ if (typeof document !== 'undefined') {
     btn.classList.toggle('active', !audio.muted);
   });
 
+  document.getElementById('disc').addEventListener('click', () => {
+    const queueItem = currentQueueItem();
+    const webpageUrl = currentTrackInfo.webpageUrl || (queueItem && queueItem.webpage_url);
+    if (webpageUrl) {
+      window.open(webpageUrl, '_blank', 'noopener');
+    }
+  });
+
   connectWebSocket();
   loadLastSearch();
   loadPlaylists();
