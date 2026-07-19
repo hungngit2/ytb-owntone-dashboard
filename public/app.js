@@ -90,7 +90,7 @@ function mapPlayerResponse(player) {
 function mapQueueResponse(queue, currentItemId) {
   const items = queue.items || [];
   const current = items.find((item) => item.id === currentItemId) || items[0];
-  return { title: current ? current.title : '' };
+  return { title: current ? current.title : '', isFifo: Boolean(current) && current.data_kind === 'pipe' };
 }
 
 if (typeof module !== 'undefined' && module.exports) {
@@ -1016,6 +1016,8 @@ function applyPlayerState(player, queue) {
   const badgeEl = document.getElementById('status-badge');
   badgeEl.textContent = player.isPlaying ? 'PLAYING' : 'IDLE';
   badgeEl.classList.toggle('playing', player.isPlaying);
+
+  document.getElementById('fifo-badge').hidden = !queue.isFifo;
 
   lastKnownQueueTitle = queue.title;
   renderNowPlaying(queue.title);

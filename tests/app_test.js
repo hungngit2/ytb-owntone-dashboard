@@ -77,10 +77,16 @@ const paused = mapPlayerResponse({ state: 'pause', item_progress_ms: 0, item_len
 assert.strictEqual(paused.isPlaying, false, 'maps a paused state');
 
 const queue = mapQueueResponse({ items: [{ id: 5, title: 'Now Playing Track' }] }, 5);
-assert.deepStrictEqual(queue, { title: 'Now Playing Track' }, 'maps queue to current track title using currentItemId param');
+assert.deepStrictEqual(queue, { title: 'Now Playing Track', isFifo: false }, 'maps queue to current track title using currentItemId param');
 
 const emptyQueue = mapQueueResponse({ items: [] }, 5);
-assert.deepStrictEqual(emptyQueue, { title: '' }, 'maps empty queue to empty title');
+assert.deepStrictEqual(emptyQueue, { title: '', isFifo: false }, 'maps empty queue to empty title');
+
+const fifoQueue = mapQueueResponse({ items: [{ id: 5, title: 'Fifo Track', data_kind: 'pipe' }] }, 5);
+assert.deepStrictEqual(fifoQueue, { title: 'Fifo Track', isFifo: true }, 'flags a pipe-sourced queue item as fifo');
+
+const urlQueue = mapQueueResponse({ items: [{ id: 5, title: 'Direct Track', data_kind: 'url' }] }, 5);
+assert.deepStrictEqual(urlQueue, { title: 'Direct Track', isFifo: false }, 'a direct url queue item is not flagged as fifo');
 
 assert.strictEqual(sanitizeVolume(42), 42, 'accepts an in-range volume');
 assert.strictEqual(sanitizeVolume(0), 0, 'accepts the 0 boundary');

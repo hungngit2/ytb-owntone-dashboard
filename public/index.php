@@ -25,6 +25,7 @@
         <div class="hero-top-right">
           <div class="hero-status-row">
             <span id="status-badge">IDLE</span>
+            <span id="fifo-badge" title="Playing via the fifo pipeline (direct stream unavailable for this track)" hidden>FIFO</span>
             <span id="ws-status" title="OwnTone connection status">●</span>
           </div>
           <div class="hero-toggle-row">

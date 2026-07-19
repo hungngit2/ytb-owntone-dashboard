@@ -210,6 +210,16 @@ body {
   background: var(--accent-play);
 }
 
+#fifo-badge {
+  font-size: 10px;
+  font-weight: 700;
+  background: rgba(180, 120, 0, 0.75);
+  backdrop-filter: blur(4px);
+  color: #fff;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
 #ws-status {
   color: #b04a4a;
   font-size: 10px;
