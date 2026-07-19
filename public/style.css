@@ -142,6 +142,7 @@ body {
 #now-title-text {
   display: inline-block;
   white-space: nowrap;
+  cursor: pointer;
 }
 
 /* Only animated once JS measures real overflow (see updateMarquee in
