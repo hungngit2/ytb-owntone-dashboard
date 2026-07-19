@@ -63,7 +63,7 @@ assert_true(audio_cache_path('https://youtu.be/dQw4w9WgXcQ', '/tmp/cache') === '
 assert_true(audio_cache_path('not a url', '/tmp/cache') === null, 'audio_cache_path returns null when no video id can be extracted');
 
 $resolveCmd = build_resolve_direct_stream_url_cmd('https://youtu.be/dQw4w9WgXcQ');
-assert_true(str_contains($resolveCmd, YTDLP_BIN . ' --no-playlist -f bestaudio -g'), 'resolve cmd asks yt-dlp for the direct bestaudio url via -g');
+assert_true(str_contains($resolveCmd, YTDLP_BIN . ' --no-playlist -f "bestaudio[ext=m4a]/bestaudio" -g'), 'resolve cmd asks yt-dlp for the direct url via -g, preferring a seekable m4a rendition');
 assert_true(str_starts_with($resolveCmd, TIMEOUT_BIN), 'resolve cmd is guarded by an absolute-path timeout');
 assert_true(str_contains($resolveCmd, "'https://youtu.be/dQw4w9WgXcQ'"), 'resolve cmd embeds the target url');
 
@@ -257,7 +257,7 @@ assert_true(
 );
 
 $tmpConfirmedFile = sys_get_temp_dir() . '/backend_test_confirmed_' . uniqid() . '.json';
-reset_confirmed_playing($tmpConfirmedFile);
+reset_confirmed_playing(false, $tmpConfirmedFile);
 assert_true(
     !mark_confirmed_playing_if_active($idlePlayer, $tmpConfirmedFile),
     'mark_confirmed_playing_if_active reports false right after a reset, while the player is still idle'
@@ -270,6 +270,36 @@ assert_true(
     mark_confirmed_playing_if_active($idlePlayer, $tmpConfirmedFile),
     'mark_confirmed_playing_if_active keeps reporting true afterwards, even once the player has since gone idle'
 );
+
+assert_true(
+    !is_current_track_direct($tmpConfirmedFile),
+    'is_current_track_direct defaults to false (fifo) for a freshly reset state'
+);
+mark_current_track_is_direct(true, $tmpConfirmedFile);
+assert_true(is_current_track_direct($tmpConfirmedFile), 'mark_current_track_is_direct(true) is reflected by is_current_track_direct');
+assert_true(
+    mark_confirmed_playing_if_active($idlePlayer, $tmpConfirmedFile),
+    'mark_current_track_is_direct does not clobber the previously-recorded confirmed flag'
+);
+mark_current_track_is_direct(false, $tmpConfirmedFile);
+assert_true(!is_current_track_direct($tmpConfirmedFile), 'mark_current_track_is_direct(false) is reflected by is_current_track_direct');
+
+// A fresh, genuinely-unknown play resets is_direct to false too.
+mark_current_track_is_direct(true, $tmpConfirmedFile);
+reset_confirmed_playing(false, $tmpConfirmedFile);
+assert_true(!is_current_track_direct($tmpConfirmedFile), 'reset_confirmed_playing(false) clears is_direct for a fresh play attempt');
+
+// A seek re-buffers an already-known-direct track — is_direct must survive
+// the reset, or the seek's own re-buffering window gets misread as finished
+// (confirmed live: this was the actual bug).
+mark_current_track_is_direct(true, $tmpConfirmedFile);
+reset_confirmed_playing(true, $tmpConfirmedFile);
+assert_true(is_current_track_direct($tmpConfirmedFile), 'reset_confirmed_playing(true) preserves is_direct across a seek');
+assert_true(
+    !mark_confirmed_playing_if_active($idlePlayer, $tmpConfirmedFile),
+    'reset_confirmed_playing(true) still clears confirmed, even though is_direct survives'
+);
+
 unlink($tmpConfirmedFile);
 
 assert_true(next_queue_index(0, 3, false) === 1, 'next_queue_index (sequential) moves forward by one');

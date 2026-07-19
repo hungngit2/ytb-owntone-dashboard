@@ -1087,11 +1087,12 @@ function startProgressTicker(isPlaying, progressSeconds, durationSeconds) {
   }, 1000);
 }
 
-// Only draggable once the current track is fully cached server-side (see
-// serverQueue.seekable) — OwnTone can't seek a live pipe stream, only a
-// real file on disk, so dragging is a no-op (and #progress-track lacks
-// the .seekable class, so it isn't even clickable) until that download
-// finishes in the background.
+// Only draggable when serverQueue.seekable is true — either the track is
+// playing directly over HTTP (OwnTone can seek that natively) or it's a
+// fifo/pipe track that's now fully cached server-side (OwnTone can't seek a
+// live pipe stream, only a real file on disk). Otherwise dragging is a
+// no-op (and #progress-track lacks the .seekable class, so it isn't even
+// clickable).
 function updateProgressDisplay(progressSeconds, durationSeconds) {
   const pct = durationSeconds > 0 ? (progressSeconds / durationSeconds) * 100 : 0;
   document.getElementById('progress-fill').style.width = `${pct}%`;
