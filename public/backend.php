@@ -396,17 +396,61 @@ function save_queue_state(array $items, int $currentIndex, bool $shuffle = false
     file_put_contents($path, json_encode(['items' => $items, 'current_index' => $currentIndex, 'shuffle' => $shuffle, 'repeat' => $repeat]));
 }
 
-// Marks a fresh play attempt as "not yet confirmed playing" — called right
-// as a new track starts, so a still-blank player state (still resolving/
-// negotiating outputs) isn't mistaken for the *previous* track's natural
-// end-of-stream by queue_should_advance's third signal.
-function reset_confirmed_playing(string $path = CONFIRMED_PLAYING_FILE): void
+function read_playback_progress_state(string $path = CONFIRMED_PLAYING_FILE): array
+{
+    $decoded = read_json_file($path);
+    return [
+        'confirmed' => (bool) ($decoded['confirmed'] ?? false),
+        'is_direct' => (bool) ($decoded['is_direct'] ?? false),
+    ];
+}
+
+function write_playback_progress_state(array $state, string $path = CONFIRMED_PLAYING_FILE): void
 {
     $dir = dirname($path);
     if (!is_dir($dir)) {
         mkdir($dir, 0755, true);
     }
-    file_put_contents($path, json_encode(['confirmed' => false]));
+    file_put_contents($path, json_encode($state));
+}
+
+// Marks a fresh play attempt as "not yet confirmed playing" — called right
+// as a new track starts, so a still-blank player state (still resolving/
+// negotiating outputs) isn't mistaken for the *previous* track's natural
+// end-of-stream by queue_should_advance's third signal.
+//
+// $keepIsDirect matters for seek_direct_http_playback: a seek re-buffers an
+// *already-known-direct* track, so is_direct must stay true through it —
+// confirmed live, defaulting this to false (as for a genuinely new/unknown
+// play) clobbered is_direct back to false right as a seek entered its
+// vulnerable re-buffering window, undoing the pipelineExitedAfterStarting
+// guard in advance_queue_if_finished and causing an immediate false
+// auto-advance the moment progress ticked past 0 again.
+function reset_confirmed_playing(bool $keepIsDirect = false, string $path = CONFIRMED_PLAYING_FILE): void
+{
+    $isDirect = $keepIsDirect ? read_playback_progress_state($path)['is_direct'] : false;
+    write_playback_progress_state(['confirmed' => false, 'is_direct' => $isDirect], $path);
+}
+
+// Whether the *currently playing* track is a direct-HTTP ("url") item —
+// persisted explicitly by play_url_body rather than re-derived live from
+// OwnTone's /api/player+/api/queue on every check: that live lookup goes
+// blank (item_id 0) during exactly the moments this flag needs to cover —
+// a track's natural end, or mid-seek re-buffering — which made a
+// live-lookup version of this check useless right when it mattered most
+// (confirmed live: seeking a direct track was still triggering a false
+// auto-advance even after gating on it, because the live lookup itself
+// went blank during the seek's brief re-buffer).
+function mark_current_track_is_direct(bool $isDirect, string $path = CONFIRMED_PLAYING_FILE): void
+{
+    $state = read_playback_progress_state($path);
+    $state['is_direct'] = $isDirect;
+    write_playback_progress_state($state, $path);
+}
+
+function is_current_track_direct(string $path = CONFIRMED_PLAYING_FILE): bool
+{
+    return read_playback_progress_state($path)['is_direct'];
 }
 
 // Records (and returns) whether the current item has been observed actually
@@ -415,15 +459,13 @@ function mark_confirmed_playing_if_active(array $player, string $path = CONFIRME
 {
     $isActive = ($player['state'] ?? '') === 'play' || (int) ($player['item_progress_ms'] ?? 0) > 0;
     if ($isActive) {
-        $dir = dirname($path);
-        if (!is_dir($dir)) {
-            mkdir($dir, 0755, true);
-        }
-        file_put_contents($path, json_encode(['confirmed' => true]));
+        $state = read_playback_progress_state($path);
+        $state['confirmed'] = true;
+        write_playback_progress_state($state, $path);
         return true;
     }
 
-    return (bool) (read_json_file($path)['confirmed'] ?? false);
+    return read_playback_progress_state($path)['confirmed'];
 }
 
 // Pure decision: given OwnTone's raw /api/player response, has the current
@@ -833,13 +875,19 @@ function stop_existing_pipeline(): void
 }
 
 // Resolves a video straight to its underlying CDN audio URL — no download,
-// just format-selection metadata (same -f bestaudio selector already used
-// for the fifo/preload pipeline). See resolve_direct_stream_url for why this
+// just format-selection metadata. See resolve_direct_stream_url for why this
 // is tried before falling back to the fifo pipeline at all.
+//
+// Prefers m4a over the plain "bestaudio" selector (usually opus-in-webm):
+// confirmed live that OwnTone/ffmpeg can't seek an opus/webm stream over
+// HTTP (player_playback_seek succeeds but progress never actually moves),
+// while an m4a/mp4 stream seeks correctly — mp4's moov atom index makes it
+// randomly seekable in a way a live opus/webm stream isn't. Falls back to
+// bestaudio for the rare video with no m4a rendition.
 function build_resolve_direct_stream_url_cmd(string $youtubeUrl): string
 {
     return sprintf(
-        '%s 15 %s --no-playlist -f bestaudio -g %s 2>/dev/null',
+        '%s 15 %s --no-playlist -f "bestaudio[ext=m4a]/bestaudio" -g %s 2>/dev/null',
         TIMEOUT_BIN,
         YTDLP_BIN,
         escapeshellarg($youtubeUrl)
@@ -853,16 +901,21 @@ function resolve_direct_stream_url(string $youtubeUrl): ?string
     return preg_match('#^https?://#i', $firstLine) ? $firstLine : null;
 }
 
-function owntone_post_status(string $path): int
+function owntone_request_status(string $path, string $method): int
 {
     $ch = curl_init(OWNTONE_BASE . $path);
-    curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'POST');
+    curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_TIMEOUT, 5);
     curl_exec($ch);
     $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
     return $status;
+}
+
+function owntone_post_status(string $path): int
+{
+    return owntone_request_status($path, 'POST');
 }
 
 // Handing OwnTone the resolved CDN URL directly (as a plain DATA_KIND_HTTP
@@ -968,6 +1021,50 @@ function play_via_pipe(string $url, int $startAtSeconds, ?string $cachedAudioPat
     ];
 }
 
+// The actual play — assumes the playback lock is already held by the
+// caller. Split out from play_url() so callers that also need to mutate
+// queue_state.json/confirmed_playing.json atomically alongside the play
+// itself (handle_play_queue, advance_queue_if_finished) can do the whole
+// sequence under ONE lock acquisition instead of racing the daemon's
+// independent poll in the gap between two separate lock acquisitions —
+// confirmed live: that gap let a stale "confirmed playing" flag from the
+// *previous* track combine with a transient mid-transition idle blip to
+// make the daemon think a just-started track had already finished,
+// wiping queue_state right after a fresh play_queue call.
+function play_url_body(string $url, int $startAtSeconds, ?string $cachedAudioPath): array
+{
+    stop_existing_pipeline();
+    reset_confirmed_playing();
+
+    $oembed = fetch_youtube_oembed($url);
+    $title = $oembed['title'] ?? '';
+    $channel = $oembed['author_name'] ?? '';
+    $thumbnailUrl = $oembed['thumbnail_url'] ?? '';
+
+    // Seeks always go through the fifo/cached-file path below. A fresh
+    // play tries the simpler direct-HTTP path first, falling back to
+    // the fifo pipeline only if OwnTone can't open the resolved URL.
+    if ($startAtSeconds === 0) {
+        $direct = attempt_direct_http_play($url, $title, $channel, $thumbnailUrl);
+        if ($direct !== null) {
+            mark_current_track_is_direct(true);
+            if ($cachedAudioPath === null) {
+                ensure_current_track_cached($url);
+            }
+            return $direct;
+        }
+    }
+
+    mark_current_track_is_direct(false);
+    return play_via_pipe($url, $startAtSeconds, $cachedAudioPath, $title, $channel, $thumbnailUrl);
+}
+
+function resolve_cached_audio_path(string $url): ?string
+{
+    $cachePath = audio_cache_path($url);
+    return ($cachePath !== null && file_exists($cachePath)) ? $cachePath : null;
+}
+
 function play_url(string $url, int $startAtSeconds = 0): array
 {
     if (!is_youtube_url($url)) {
@@ -978,36 +1075,14 @@ function play_url(string $url, int $startAtSeconds = 0): array
     // this exact track, skip yt-dlp's resolve+download step entirely —
     // that's the delay preloading exists to remove. Seeking additionally
     // *requires* the cache: a live yt-dlp stream has no random access.
-    $cachePath = audio_cache_path($url);
-    $cachedAudioPath = ($cachePath !== null && file_exists($cachePath)) ? $cachePath : null;
+    $cachedAudioPath = resolve_cached_audio_path($url);
 
     if ($startAtSeconds > 0 && $cachedAudioPath === null) {
         return ['status' => 'error', 'message' => 'seek not ready yet — track is not fully cached'];
     }
 
     return with_playback_lock(function () use ($url, $startAtSeconds, $cachedAudioPath) {
-        stop_existing_pipeline();
-        reset_confirmed_playing();
-
-        $oembed = fetch_youtube_oembed($url);
-        $title = $oembed['title'] ?? '';
-        $channel = $oembed['author_name'] ?? '';
-        $thumbnailUrl = $oembed['thumbnail_url'] ?? '';
-
-        // Seeks always go through the fifo/cached-file path below. A fresh
-        // play tries the simpler direct-HTTP path first, falling back to
-        // the fifo pipeline only if OwnTone can't open the resolved URL.
-        if ($startAtSeconds === 0) {
-            $direct = attempt_direct_http_play($url, $title, $channel, $thumbnailUrl);
-            if ($direct !== null) {
-                if ($cachedAudioPath === null) {
-                    ensure_current_track_cached($url);
-                }
-                return $direct;
-            }
-        }
-
-        return play_via_pipe($url, $startAtSeconds, $cachedAudioPath, $title, $channel, $thumbnailUrl);
+        return play_url_body($url, $startAtSeconds, $cachedAudioPath);
     });
 }
 
@@ -1035,6 +1110,22 @@ function ensure_current_track_cached(string $url): void
     shell_exec(build_preload_cmd($url, $cachePath));
 }
 
+
+// A direct-HTTP item is a real seekable source as far as OwnTone/ffmpeg is
+// concerned (the CDN URL supports byte-range requests) — no local cache or
+// pipeline restart needed, unlike the fifo path below.
+function seek_direct_http_playback(int $targetSeconds): array
+{
+    return with_playback_lock(function () use ($targetSeconds) {
+        reset_confirmed_playing(true);
+        $httpStatus = owntone_request_status('/api/player/seek?position_ms=' . ($targetSeconds * 1000), 'PUT');
+        if ($httpStatus < 200 || $httpStatus >= 300) {
+            return ['status' => 'error', 'message' => 'seek failed'];
+        }
+        return ['status' => 'ok'];
+    });
+}
+
 function handle_seek(int $targetSeconds): void
 {
     if ($targetSeconds < 0) {
@@ -1048,6 +1139,11 @@ function handle_seek(int $targetSeconds): void
     if ($currentIndex < 0 || !isset($state['items'][$currentIndex])) {
         http_response_code(409);
         echo json_encode(['status' => 'error', 'message' => 'nothing is playing']);
+        return;
+    }
+
+    if (is_current_track_direct()) {
+        echo json_encode(seek_direct_http_playback($targetSeconds));
         return;
     }
 
@@ -1119,9 +1215,16 @@ function handle_play_queue(array $items, int $index, bool $shuffle, string $repe
         return;
     }
 
-    save_queue_state($items, $index, $shuffle, $repeat);
+    $url = $items[$index]['webpage_url'];
+    $cachedAudioPath = resolve_cached_audio_path($url);
 
-    $result = play_url($items[$index]['webpage_url']);
+    // Saving the new queue state and actually playing it must happen under
+    // ONE lock acquisition — see play_url_body's comment for the race this
+    // closes (the daemon polling in the gap between two separate locks).
+    $result = with_playback_lock(function () use ($items, $index, $shuffle, $repeat, $url, $cachedAudioPath) {
+        save_queue_state($items, $index, $shuffle, $repeat);
+        return play_url_body($url, 0, $cachedAudioPath);
+    });
     maybe_preload_next($items, $index, $shuffle, $repeat);
 
     echo json_encode($result);
@@ -1137,6 +1240,7 @@ function handle_stop(): void
         stop_existing_pipeline();
         owntone_put('/api/player/stop');
         save_queue_state([], -1, false);
+        reset_confirmed_playing();
         return ['status' => 'ok'];
     });
     echo json_encode($result);
@@ -1170,35 +1274,62 @@ function handle_queue_state(): void
         ? ($state['items'][$state['current_index']]['webpage_url'] ?? '')
         : '';
     $cachePath = $currentUrl !== '' ? audio_cache_path($currentUrl) : null;
-    $state['seekable'] = $cachePath !== null && file_exists($cachePath);
+    $state['seekable'] = ($cachePath !== null && file_exists($cachePath)) || is_current_track_direct();
     echo json_encode($state);
 }
 
 // Invoked by bin/queue-daemon.php on a loop — not reachable over HTTP.
 function advance_queue_if_finished(): void
 {
-    $state = load_queue_state();
-    $items = $state['items'];
-    $currentIndex = $state['current_index'];
-    $shuffle = $state['shuffle'];
-    $repeat = $state['repeat'];
+    // The read-decide-act sequence below races a concurrent user-triggered
+    // play (handle_play_queue) unless both hold the SAME lock for their
+    // whole operation — see play_url_body's comment. A busy lock here just
+    // means "try again next daemon tick" (2s later), so failing to acquire
+    // it is not an error worth surfacing anywhere.
+    $result = with_playback_lock(function () {
+        $state = load_queue_state();
+        $items = $state['items'];
+        $currentIndex = $state['current_index'];
+        $shuffle = $state['shuffle'];
+        $repeat = $state['repeat'];
 
-    $player = owntone_get('/api/player');
-    $hasConfirmedPlaying = mark_confirmed_playing_if_active($player);
+        $player = owntone_get('/api/player');
+        $hasConfirmedPlaying = mark_confirmed_playing_if_active($player);
 
-    if (!queue_should_advance($player, $currentIndex, count($items), is_pipeline_running(), $hasConfirmedPlaying)) {
-        return;
+        // is_pipeline_running() only means something for a fifo track (it
+        // checks for OUR OWN ffmpeg process) — a direct-HTTP track never has
+        // one, so it's always false regardless of whether that track is
+        // fine, paused, or mid-seek-buffering. Treating that as "always
+        // true" (i.e. disabling this signal) for direct tracks avoids
+        // misreading a plain pause or a seek's brief re-buffer as finished —
+        // confirmed live: seeking a direct track was triggering an
+        // immediate false auto-advance via this exact path. Uses the
+        // persisted is_current_track_direct flag, not a live OwnTone lookup
+        // — that lookup goes blank (item_id 0) during exactly the moments
+        // this needs to cover, which defeated an earlier version of this
+        // same guard.
+        $pipelineStillRunning = is_current_track_direct() ? true : is_pipeline_running();
+
+        if (!queue_should_advance($player, $currentIndex, count($items), $pipelineStillRunning, $hasConfirmedPlaying)) {
+            return ['advanced' => false];
+        }
+
+        $nextIndex = next_queue_index($currentIndex, count($items), $shuffle, $repeat);
+        if ($nextIndex === null) {
+            save_queue_state([], -1, false);
+            return ['advanced' => false];
+        }
+
+        save_queue_state($items, $nextIndex, $shuffle, $repeat);
+        $nextUrl = $items[$nextIndex]['webpage_url'] ?? '';
+        play_url_body($nextUrl, 0, resolve_cached_audio_path($nextUrl));
+
+        return ['advanced' => true, 'items' => $items, 'nextIndex' => $nextIndex, 'shuffle' => $shuffle, 'repeat' => $repeat];
+    });
+
+    if ($result['advanced'] ?? false) {
+        maybe_preload_next($result['items'], $result['nextIndex'], $result['shuffle'], $result['repeat']);
     }
-
-    $nextIndex = next_queue_index($currentIndex, count($items), $shuffle, $repeat);
-    if ($nextIndex === null) {
-        save_queue_state([], -1, false);
-        return;
-    }
-
-    save_queue_state($items, $nextIndex, $shuffle, $repeat);
-    play_url($items[$nextIndex]['webpage_url'] ?? '');
-    maybe_preload_next($items, $nextIndex, $shuffle, $repeat);
 }
 
 if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
