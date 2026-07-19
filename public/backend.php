@@ -34,6 +34,10 @@ define('LAST_SEARCH_FILE', '/mnt/appsrv/ytb-owntone/data/last_search.json');
 // read by bin/queue-daemon.php so auto-advance-to-next-track works even
 // with no browser open — the daemon is what's watching, not any tab.
 define('QUEUE_STATE_FILE', '/mnt/appsrv/ytb-owntone/data/queue_state.json');
+// Persists whether the currently-playing item was ever actually observed
+// playing — see queue_should_advance's third signal for why this matters
+// specifically for direct-HTTP tracks.
+define('CONFIRMED_PLAYING_FILE', '/mnt/appsrv/ytb-owntone/data/confirmed_playing.json');
 // Holds at most one pre-downloaded "next track" audio file at a time (see
 // maybe_preload_next) — outside the web root like the other data paths.
 define('AUDIO_CACHE_DIR', '/mnt/appsrv/ytb-owntone/cache');
@@ -392,13 +396,43 @@ function save_queue_state(array $items, int $currentIndex, bool $shuffle = false
     file_put_contents($path, json_encode(['items' => $items, 'current_index' => $currentIndex, 'shuffle' => $shuffle, 'repeat' => $repeat]));
 }
 
+// Marks a fresh play attempt as "not yet confirmed playing" — called right
+// as a new track starts, so a still-blank player state (still resolving/
+// negotiating outputs) isn't mistaken for the *previous* track's natural
+// end-of-stream by queue_should_advance's third signal.
+function reset_confirmed_playing(string $path = CONFIRMED_PLAYING_FILE): void
+{
+    $dir = dirname($path);
+    if (!is_dir($dir)) {
+        mkdir($dir, 0755, true);
+    }
+    file_put_contents($path, json_encode(['confirmed' => false]));
+}
+
+// Records (and returns) whether the current item has been observed actually
+// playing at any point since the last reset_confirmed_playing() call.
+function mark_confirmed_playing_if_active(array $player, string $path = CONFIRMED_PLAYING_FILE): bool
+{
+    $isActive = ($player['state'] ?? '') === 'play' || (int) ($player['item_progress_ms'] ?? 0) > 0;
+    if ($isActive) {
+        $dir = dirname($path);
+        if (!is_dir($dir)) {
+            mkdir($dir, 0755, true);
+        }
+        file_put_contents($path, json_encode(['confirmed' => true]));
+        return true;
+    }
+
+    return (bool) (read_json_file($path)['confirmed'] ?? false);
+}
+
 // Pure decision: given OwnTone's raw /api/player response, has the current
 // item finished? Rejects a missing/zero item_length_ms (duration lookup
 // failed or hasn't landed yet) rather than guessing — better to not
 // auto-advance than to advance while still mid-playback. Whether there's
 // a valid *next* item is next_queue_index's concern, not this one.
 //
-// Two independent signals, either is sufficient once genuinely paused:
+// Three independent signals, any is sufficient once genuinely not playing:
 // 1. Progress is within 4s of yt-dlp's reported duration — works for most
 //    videos, where the estimate is close to the real decoded length.
 // 2. Our own ffmpeg pipeline process has already exited on its own —
@@ -411,7 +445,15 @@ function save_queue_state(array $items, int $currentIndex, bool $shuffle = false
 //    signal 1 never triggering because progress never got that close.
 //    Requires progress > 0 so a track that never actually started (pipeline
 //    failed before playing anything) isn't mistaken for "finished".
-function queue_should_advance(array $player, int $currentIndex, int $itemCount, bool $pipelineStillRunning = true): bool
+// 3. A direct-HTTP ("url") track's natural end-of-stream: unlike a pipe
+//    track, OwnTone doesn't pause with the item retained — it wipes the
+//    player back to a blank stop/idle state (item_id 0, length 0, progress
+//    0), confirmed live. That blank shape is otherwise indistinguishable
+//    from "hasn't started playing yet" (still resolving/negotiating
+//    outputs), so $hasConfirmedPlaying — whether this item was ever
+//    actually seen playing — must be true before trusting it as "finished"
+//    rather than "not started".
+function queue_should_advance(array $player, int $currentIndex, int $itemCount, bool $pipelineStillRunning = true, bool $hasConfirmedPlaying = false): bool
 {
     if ($currentIndex < 0 || $itemCount <= 0) {
         return false;
@@ -424,11 +466,13 @@ function queue_should_advance(array $player, int $currentIndex, int $itemCount, 
 
     $progressMs = (int) ($player['item_progress_ms'] ?? 0);
     $lengthMs = (int) ($player['item_length_ms'] ?? 0);
+    $itemId = (int) ($player['item_id'] ?? 0);
 
     $nearEndByDuration = $lengthMs > 0 && $progressMs >= ($lengthMs - 4000);
     $pipelineExitedAfterStarting = !$pipelineStillRunning && $progressMs > 0;
+    $wentIdleAfterConfirmedPlaying = $hasConfirmedPlaying && $itemId === 0 && $lengthMs === 0 && $progressMs === 0;
 
-    return $nearEndByDuration || $pipelineExitedAfterStarting;
+    return $nearEndByDuration || $pipelineExitedAfterStarting || $wentIdleAfterConfirmedPlaying;
 }
 
 // Pure: which index plays next. Sequential mode stops at the end (returns
@@ -943,6 +987,7 @@ function play_url(string $url, int $startAtSeconds = 0): array
 
     return with_playback_lock(function () use ($url, $startAtSeconds, $cachedAudioPath) {
         stop_existing_pipeline();
+        reset_confirmed_playing();
 
         $oembed = fetch_youtube_oembed($url);
         $title = $oembed['title'] ?? '';
@@ -1138,7 +1183,10 @@ function advance_queue_if_finished(): void
     $shuffle = $state['shuffle'];
     $repeat = $state['repeat'];
 
-    if (!queue_should_advance(owntone_get('/api/player'), $currentIndex, count($items), is_pipeline_running())) {
+    $player = owntone_get('/api/player');
+    $hasConfirmedPlaying = mark_confirmed_playing_if_active($player);
+
+    if (!queue_should_advance($player, $currentIndex, count($items), is_pipeline_running(), $hasConfirmedPlaying)) {
         return;
     }
 
