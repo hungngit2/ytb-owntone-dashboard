@@ -26,6 +26,23 @@ if (!defined('OWNTONE_AUTH_USERNAME')) {
 if (!defined('OWNTONE_AUTH_PASSWORD')) {
     define('OWNTONE_AUTH_PASSWORD', '');
 }
+// Optional, untracked (like config.js/owntone-auth.php) — define these to
+// require this app's own login (HTTP Basic Auth) for any client whose IP
+// isn't private/LAN, or for everyone if DASHBOARD_FORCE_AUTH_FOR_LOCAL is
+// true. Copy dashboard-auth.example.php to dashboard-auth.php and fill it
+// in; left blank, no login is ever required (today's default behavior).
+if (file_exists(__DIR__ . '/dashboard-auth.php')) {
+    require __DIR__ . '/dashboard-auth.php';
+}
+if (!defined('DASHBOARD_AUTH_USERNAME')) {
+    define('DASHBOARD_AUTH_USERNAME', '');
+}
+if (!defined('DASHBOARD_AUTH_PASSWORD')) {
+    define('DASHBOARD_AUTH_PASSWORD', '');
+}
+if (!defined('DASHBOARD_FORCE_AUTH_FOR_LOCAL')) {
+    define('DASHBOARD_FORCE_AUTH_FOR_LOCAL', false);
+}
 // All host-side app state lives under one parent directory now (pipes/
 // data/cache subfolders), outside nginx's document root and deliberately
 // NOT under /opt/docker/owntone/pipes: that path traverses
@@ -89,6 +106,72 @@ define('MAX_CONCURRENT_YTDLP', 2);
 // unique to our own ffmpeg invocation in build_play_pipeline_cmd (used
 // for both the live-stream and cached-file branches).
 define('OUR_FFMPEG_PATTERN', 'wav -ar 44100 -ac 2 pipe:1');
+
+// Pure: is this IP within the private/LAN ranges (10/8, 172.16/12,
+// 192.168/16, 127/8, ::1)? Mirrors what an nginx `geo` block would match,
+// but done here since DASHBOARD_AUTH_* enforcement lives in PHP, not nginx.
+function is_private_local_ip(string $ip): bool
+{
+    if ($ip === '::1') {
+        return true;
+    }
+
+    $long = ip2long($ip);
+    if ($long === false) {
+        return false;
+    }
+
+    $ranges = [
+        ['10.0.0.0', 8],
+        ['172.16.0.0', 12],
+        ['192.168.0.0', 16],
+        ['127.0.0.0', 8],
+    ];
+
+    foreach ($ranges as [$base, $bits]) {
+        $mask = -1 << (32 - $bits);
+        if (($long & $mask) === (ip2long($base) & $mask)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// Requires this app's own HTTP Basic Auth login for any client whose IP
+// isn't private/LAN, or for everyone if DASHBOARD_FORCE_AUTH_FOR_LOCAL is
+// true. A no-op entirely if DASHBOARD_AUTH_USERNAME/PASSWORD aren't
+// configured — matches config.js/owntone-auth.php's own blank-means-off
+// convention. Sends the 401 challenge and exits on failure, so this must
+// run before any other output.
+//
+// Only covers index.php/backend.php (both call this directly) — plain
+// static assets (app.js/style.css/config.js) are served straight by nginx
+// without ever going through PHP, so they aren't covered by this check.
+function enforce_dashboard_auth(): void
+{
+    if (DASHBOARD_AUTH_USERNAME === '' && DASHBOARD_AUTH_PASSWORD === '') {
+        return;
+    }
+
+    $clientIp = $_SERVER['REMOTE_ADDR'] ?? '';
+    $needsAuth = DASHBOARD_FORCE_AUTH_FOR_LOCAL || !is_private_local_ip($clientIp);
+    if (!$needsAuth) {
+        return;
+    }
+
+    $suppliedUser = $_SERVER['PHP_AUTH_USER'] ?? '';
+    $suppliedPass = $_SERVER['PHP_AUTH_PW'] ?? '';
+
+    if (hash_equals(DASHBOARD_AUTH_USERNAME, $suppliedUser) && hash_equals(DASHBOARD_AUTH_PASSWORD, $suppliedPass)) {
+        return;
+    }
+
+    header('WWW-Authenticate: Basic realm="Dashboard"');
+    http_response_code(401);
+    echo 'Authentication required';
+    exit;
+}
 
 function is_youtube_url(string $url): bool
 {
@@ -1502,6 +1585,8 @@ function advance_queue_if_finished(): void
 }
 
 if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
+    enforce_dashboard_auth();
+
     // Real browser-navigable GET routes (window.open/<img>/<audio> src
     // targets), not JSON POST actions like everything else below.
     $getAction = $_GET['action'] ?? '';

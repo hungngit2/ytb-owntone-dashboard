@@ -10,6 +10,17 @@ function assert_true(bool $cond, string $msg): void
     echo "PASS: $msg\n";
 }
 
+assert_true(is_private_local_ip('127.0.0.1'), '127.0.0.1 is private');
+assert_true(is_private_local_ip('::1'), '::1 (IPv6 loopback) is private');
+assert_true(is_private_local_ip('10.0.0.100'), "10.x is private (chainedbox's own LAN address)");
+assert_true(is_private_local_ip('10.255.255.255'), '10.x is private up to the top of the /8 range');
+assert_true(is_private_local_ip('192.168.1.50'), '192.168.x is private');
+assert_true(is_private_local_ip('172.16.0.5'), '172.16.x is private');
+assert_true(is_private_local_ip('172.31.255.255'), '172.31.x is private (top of the 172.16-31 range)');
+assert_true(!is_private_local_ip('172.32.0.1'), '172.32.x is public (just outside the 172.16-31 private range)');
+assert_true(!is_private_local_ip('8.8.8.8'), 'a public IP is not private');
+assert_true(!is_private_local_ip('not-an-ip'), 'a non-IP string is not private (treated as untrusted, not a crash)');
+
 assert_true(is_youtube_url('https://www.youtube.com/watch?v=abc123'), 'accepts watch url');
 assert_true(is_youtube_url('https://youtu.be/abc123'), 'accepts short url');
 assert_true(is_youtube_url('https://youtube.com/shorts/abc123'), 'accepts shorts url');

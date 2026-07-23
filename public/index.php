@@ -1,3 +1,7 @@
+<?php
+require __DIR__ . '/backend.php';
+enforce_dashboard_auth();
+?>
 <!doctype html>
 <html lang="vi">
 <head>
