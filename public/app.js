@@ -103,7 +103,6 @@ if (typeof module !== 'undefined' && module.exports) {
     mapPlayerResponse,
     mapQueueResponse,
     sanitizeVolume,
-    isPrivateLocalHost,
   };
 }
 
@@ -651,27 +650,20 @@ function showLoading(message) {
   list.appendChild(wrap);
 }
 
-// Direct port access (http://host:3689) only works on the LAN — a remote/
-// public hostname needs an nginx reverse-proxy path instead (3689 isn't
-// port-forwarded, and an https page can't call a plain http origin anyway).
-// Assumes nginx proxies /owntone/ -> 127.0.0.1:3689 and /owntone-ws/ ->
-// 127.0.0.1:3688 (OwnTone's separate websocket port) for non-local hosts.
-function isPrivateLocalHost(hostname) {
-  return (
-    hostname === 'localhost' ||
-    hostname === '127.0.0.1' ||
-    /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname) ||
-    /^192\.168\.\d{1,3}\.\d{1,3}$/.test(hostname) ||
-    /^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(hostname)
-  );
-}
-
-function owntoneBase() {
-  const hostname = window.location.hostname;
-  if (isPrivateLocalHost(hostname)) {
-    return `http://${hostname}:3689`;
-  }
-  return `https://${hostname}/owntone`;
+// The browser never talks to OwnTone directly — backend.php proxies
+// everything, holding real OwnTone credentials server-side only (see
+// backend.php's OWNTONE_AUTH_USERNAME/PASSWORD). Anything shipped to the
+// browser (config.js is a plain static file, gitignored or not) is
+// readable by anyone who can load the page, so credentials can never live
+// here — this is why owntoneBase()/direct-fetch got replaced with these
+// same-origin backend.php calls instead.
+function owntoneApiPost(action, params = {}) {
+  const body = new URLSearchParams({ action, ...params });
+  return fetch('backend.php', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body.toString(),
+  }).then((r) => r.json());
 }
 
 let currentTrackInfo = { title: null, thumbnail: null, channel: null, webpageUrl: null };
@@ -791,7 +783,7 @@ function renderNowPlaying(fallbackTitle) {
   const thumbnailUrl =
     currentTrackInfo.thumbnail ||
     (queueItem && queueItem.thumbnail) ||
-    (!queueItem && ownToneReportedTitle ? `${owntoneBase()}/artwork/nowplaying` : '');
+    (!queueItem && ownToneReportedTitle ? 'backend.php?action=owntone_artwork' : '');
 
   if (thumbnailUrl) {
     thumbEl.onerror = () => thumbEl.classList.remove('visible');
@@ -1070,7 +1062,7 @@ function reflectVolumeUI(volume) {
 
 function setVolume(volume) {
   reflectVolumeUI(volume);
-  fetch(`${owntoneBase()}/api/player/volume?volume=${volume}`, { method: 'PUT' }).catch(() =>
+  owntoneApiPost('owntone_volume', { volume }).catch(() =>
     document.getElementById('ws-status').classList.remove('ws-connected')
   );
 }
@@ -1156,8 +1148,8 @@ function formatTime(totalSeconds) {
 async function refreshPlayerState() {
   try {
     const [player, queue] = await Promise.all([
-      fetch(`${owntoneBase()}/api/player`).then((r) => r.json()),
-      fetch(`${owntoneBase()}/api/queue`).then((r) => r.json()),
+      owntoneApiPost('owntone_player'),
+      owntoneApiPost('owntone_queue'),
     ]);
     applyPlayerState(mapPlayerResponse(player), mapQueueResponse(queue, player.item_id));
     // Piggybacks on the websocket's own event cadence (fires on real OwnTone
@@ -1185,30 +1177,18 @@ function scheduleWebSocketReconnect() {
   }, wsReconnectDelayMs);
 }
 
-async function connectWebSocket() {
+function connectWebSocket() {
   const statusEl = document.getElementById('ws-status');
   clearTimeout(wsReconnectTimer);
 
-  let websocketPort;
-  try {
-    const config = await fetch(`${owntoneBase()}/api/config`).then((r) => r.json());
-    websocketPort = config.websocket_port;
-  } catch (err) {
-    statusEl.classList.remove('ws-connected');
-    scheduleWebSocketReconnect();
-    return;
-  }
-
-  if (!websocketPort) {
-    statusEl.classList.remove('ws-connected');
-    scheduleWebSocketReconnect();
-    return;
-  }
-
-  const hostname = window.location.hostname;
-  const wsUrl = isPrivateLocalHost(hostname)
-    ? `ws://${hostname}:${websocketPort}/`
-    : `wss://${hostname}/owntone-ws/`;
+  // Same-origin, via nginx's /owntone-ws/ proxy (see docs/nginx-default.conf)
+  // rather than a direct ws://host:port connection to OwnTone — a browser
+  // WebSocket handshake can't carry a custom Authorization header of its
+  // own, so nginx injects OwnTone's credentials server-side instead. No
+  // /api/config lookup needed either: nginx's proxy target is a fixed port,
+  // not whatever OwnTone happens to report.
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${wsProtocol}//${window.location.host}/owntone-ws/`;
   const ws = new WebSocket(wsUrl, 'notify');
 
   ws.addEventListener('open', () => {
@@ -1297,7 +1277,7 @@ if (typeof document !== 'undefined') {
       // it's sitting paused, not just misreport after resuming.
       pausedAtSeconds = syncedProgressSeconds + (Date.now() - progressSyncedAtMs) / 1000;
       progressOffsetSeconds = pausedAtSeconds;
-      fetch(`${owntoneBase()}/api/player/pause`, { method: 'PUT' })
+      owntoneApiPost('owntone_pause')
         .then(refreshPlayerState)
         .catch(() => document.getElementById('ws-status').classList.remove('ws-connected'));
       return;
@@ -1306,7 +1286,7 @@ if (typeof document !== 'undefined') {
     // progressOffsetSeconds is already set from the pause step above, and
     // OwnTone starts counting up from ~0 again on resume, so raw + offset
     // continues to read correctly with no further adjustment needed here.
-    fetch(`${owntoneBase()}/api/player/play`, { method: 'PUT' })
+    owntoneApiPost('owntone_resume')
       .then(refreshPlayerState)
       .catch(() => document.getElementById('ws-status').classList.remove('ws-connected'));
   });
@@ -1352,7 +1332,7 @@ if (typeof document !== 'undefined') {
       // Starts muted by default — the stream connects (so unmuting is
       // instant with no re-buffering delay) but stays silent until a
       // second click explicitly opts in to actually hearing it.
-      audio.src = `${owntoneBase()}/stream.mp3`;
+      audio.src = 'backend.php?action=owntone_stream';
       audio.muted = true;
       audio.play().catch(() => showError('Could not start browser audio stream'));
       streamStarted = true;
