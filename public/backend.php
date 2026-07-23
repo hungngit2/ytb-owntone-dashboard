@@ -12,6 +12,20 @@
 ignore_user_abort(true);
 
 define('OWNTONE_BASE', 'http://127.0.0.1:3689');
+// Optional, untracked (like config.js) — define OWNTONE_AUTH_USERNAME /
+// OWNTONE_AUTH_PASSWORD there once OwnTone's web interface has basic auth
+// enabled (Settings > Web Interface). Copy owntone-auth.example.php to
+// owntone-auth.php and fill it in; left blank/absent, no Authorization
+// header is sent, matching OwnTone's own default (unauthenticated) behavior.
+if (file_exists(__DIR__ . '/owntone-auth.php')) {
+    require __DIR__ . '/owntone-auth.php';
+}
+if (!defined('OWNTONE_AUTH_USERNAME')) {
+    define('OWNTONE_AUTH_USERNAME', '');
+}
+if (!defined('OWNTONE_AUTH_PASSWORD')) {
+    define('OWNTONE_AUTH_PASSWORD', '');
+}
 // All host-side app state lives under one parent directory now (pipes/
 // data/cache subfolders), outside nginx's document root and deliberately
 // NOT under /opt/docker/owntone/pipes: that path traverses
@@ -623,11 +637,21 @@ function handle_last_search(): void
     echo json_encode(load_last_search());
 }
 
+// Applied to every curl handle that talks to OwnTone — a no-op until
+// OWNTONE_AUTH_USERNAME/PASSWORD are set (see owntone-auth.example.php).
+function apply_owntone_auth($ch): void
+{
+    if (OWNTONE_AUTH_USERNAME !== '' || OWNTONE_AUTH_PASSWORD !== '') {
+        curl_setopt($ch, CURLOPT_USERPWD, OWNTONE_AUTH_USERNAME . ':' . OWNTONE_AUTH_PASSWORD);
+    }
+}
+
 function owntone_get(string $path): array
 {
     $ch = curl_init(OWNTONE_BASE . $path);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+    apply_owntone_auth($ch);
     $response = curl_exec($ch);
     curl_close($ch);
 
@@ -653,6 +677,7 @@ function owntone_request(string $path, string $method): void
     curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+    apply_owntone_auth($ch);
     curl_exec($ch);
     curl_close($ch);
 }
@@ -731,6 +756,53 @@ function handle_stream_redirect(string $url): void
     }
 
     header('Location: ' . $streamUrl, true, 302);
+}
+
+// Streams an OwnTone GET response straight through, byte for byte — used
+// for artwork images and the continuous stream.mp3 audio, where the
+// browser needs a plain <img>/<audio> src it can hit directly (no custom
+// headers possible on those tags), fetched here server-side (with auth)
+// instead of by the browser itself.
+function proxy_owntone_get_stream(string $path): void
+{
+    set_time_limit(0);
+
+    $ch = curl_init(OWNTONE_BASE . $path);
+    apply_owntone_auth($ch);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 0);
+    curl_setopt($ch, CURLOPT_HEADERFUNCTION, function ($ch, $headerLine) {
+        if (preg_match('/^Content-Type:\s*(.+)$/i', trim($headerLine), $matches)) {
+            header('Content-Type: ' . trim($matches[1]));
+        }
+        return strlen($headerLine);
+    });
+    curl_setopt($ch, CURLOPT_WRITEFUNCTION, function ($ch, $chunk) {
+        // stream.mp3 is a long-lived connection — if the browser tab
+        // closed or the user hit stop, keep this from streaming into the
+        // void forever. Returning anything other than strlen($chunk) tells
+        // curl to abort the transfer.
+        if (connection_aborted()) {
+            return 0;
+        }
+        echo $chunk;
+        if (ob_get_level() > 0) {
+            ob_flush();
+        }
+        flush();
+        return strlen($chunk);
+    });
+    curl_exec($ch);
+    curl_close($ch);
+}
+
+function handle_owntone_artwork(): void
+{
+    proxy_owntone_get_stream('/artwork/nowplaying');
+}
+
+function handle_owntone_stream(): void
+{
+    proxy_owntone_get_stream('/stream.mp3');
 }
 
 // Auto-generated Mix/Radio lists (list=RD...) are dynamically built per
@@ -960,12 +1032,48 @@ function get_cached_stream_url(string $youtubeUrl, string $path = RESOLVED_STREA
     return $cached['stream_url'] ?? null;
 }
 
+// The browser never talks to OwnTone directly — it only ever calls
+// backend.php, which holds real OwnTone credentials server-side (see
+// OWNTONE_AUTH_USERNAME/PASSWORD above) and proxies through. Without this,
+// the browser would need those same credentials itself to authenticate its
+// own direct calls, and anything shipped to the browser (config.js is a
+// plain static file, gitignored or not) is readable by anyone who can load
+// the page — defeating the point of OwnTone having auth at all.
+function handle_owntone_player(): void
+{
+    echo json_encode(owntone_get('/api/player'));
+}
+
+function handle_owntone_queue(): void
+{
+    echo json_encode(owntone_get('/api/queue'));
+}
+
+function handle_owntone_volume(int $volume): void
+{
+    owntone_put('/api/player/volume?volume=' . $volume);
+    echo json_encode(['status' => 'ok']);
+}
+
+function handle_owntone_pause(): void
+{
+    owntone_put('/api/player/pause');
+    echo json_encode(['status' => 'ok']);
+}
+
+function handle_owntone_resume(): void
+{
+    owntone_put('/api/player/play');
+    echo json_encode(['status' => 'ok']);
+}
+
 function owntone_request_status(string $path, string $method): int
 {
     $ch = curl_init(OWNTONE_BASE . $path);
     curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+    apply_owntone_auth($ch);
     curl_exec($ch);
     $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
@@ -1394,10 +1502,19 @@ function advance_queue_if_finished(): void
 }
 
 if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
-    // A real browser-navigable GET route (window.open target), not a JSON
-    // POST action like everything else below — see handle_stream_redirect.
-    if (($_GET['action'] ?? '') === 'stream_redirect') {
+    // Real browser-navigable GET routes (window.open/<img>/<audio> src
+    // targets), not JSON POST actions like everything else below.
+    $getAction = $_GET['action'] ?? '';
+    if ($getAction === 'stream_redirect') {
         handle_stream_redirect((string) ($_GET['url'] ?? ''));
+        return;
+    }
+    if ($getAction === 'owntone_artwork') {
+        handle_owntone_artwork();
+        return;
+    }
+    if ($getAction === 'owntone_stream') {
+        handle_owntone_stream();
         return;
     }
 
@@ -1447,8 +1564,16 @@ if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
         handle_resolve_url((string) ($_POST['url'] ?? ''));
     } elseif ($action === 'resolve_mix_playlist') {
         handle_resolve_mix_playlist((string) ($_POST['url'] ?? ''));
-    } elseif ($action === 'resolve_stream') {
-        handle_resolve_stream((string) ($_POST['url'] ?? ''));
+    } elseif ($action === 'owntone_player') {
+        handle_owntone_player();
+    } elseif ($action === 'owntone_queue') {
+        handle_owntone_queue();
+    } elseif ($action === 'owntone_volume') {
+        handle_owntone_volume((int) ($_POST['volume'] ?? 0));
+    } elseif ($action === 'owntone_pause') {
+        handle_owntone_pause();
+    } elseif ($action === 'owntone_resume') {
+        handle_owntone_resume();
     } else {
         http_response_code(400);
         echo json_encode(['status' => 'error', 'message' => 'unknown action']);
