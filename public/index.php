@@ -17,8 +17,14 @@ enforce_dashboard_auth();
         <img id="hero-bg-img" class="hero-bg-img" alt="">
         <div class="hero-art-overlay"></div>
 
-        <div id="disc" class="hero-thumb-wrap">
-          <img id="disc-thumb" class="hero-thumb" alt="">
+        <div class="hero-disc-col">
+          <div id="disc" class="hero-thumb-wrap">
+            <img id="disc-thumb" class="hero-thumb" alt="">
+          </div>
+          <div id="play-mode-row" class="play-mode-row">
+            <button type="button" class="play-mode-btn active" data-mode="owntone">OwnTone</button>
+            <button type="button" class="play-mode-btn" data-mode="local">Local</button>
+          </div>
         </div>
 
         <div class="hero-text">
