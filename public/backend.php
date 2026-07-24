@@ -503,6 +503,7 @@ function read_playback_progress_state(string $path = CONFIRMED_PLAYING_FILE): ar
     return [
         'confirmed' => (bool) ($decoded['confirmed'] ?? false),
         'is_direct' => (bool) ($decoded['is_direct'] ?? false),
+        'user_paused' => (bool) ($decoded['user_paused'] ?? false),
     ];
 }
 
@@ -530,7 +531,12 @@ function write_playback_progress_state(array $state, string $path = CONFIRMED_PL
 function reset_confirmed_playing(bool $keepIsDirect = false, string $path = CONFIRMED_PLAYING_FILE): void
 {
     $isDirect = $keepIsDirect ? read_playback_progress_state($path)['is_direct'] : false;
-    write_playback_progress_state(['confirmed' => false, 'is_direct' => $isDirect], $path);
+    write_playback_progress_state(['confirmed' => false, 'is_direct' => $isDirect, 'user_paused' => false], $path);
+}
+
+function is_user_paused(string $path = CONFIRMED_PLAYING_FILE): bool
+{
+    return read_playback_progress_state($path)['user_paused'];
 }
 
 // Whether the *currently playing* track is a direct-HTTP ("url") item —
@@ -582,12 +588,9 @@ function mark_confirmed_playing_if_active(array $player, string $path = CONFIRME
 //    ffmpeg naturally exits once its input (the yt-dlp stream or the
 //    cached file) reaches EOF, i.e. once the audio genuinely finishes,
 //    regardless of what yt-dlp's duration estimate said. Needed because
-//    some videos' actual audio ends more than the 4s tolerance short of
-//    that estimate (codec/container-dependent) — confirmed live: paused
-//    with several seconds still "remaining" and never advancing, with
-//    signal 1 never triggering because progress never got that close.
-//    Requires progress > 0 so a track that never actually started (pipeline
-//    failed before playing anything) isn't mistaken for "finished".
+//    some videos' actual audio ends short of that estimate (codec/container-
+//    dependent). Requires progress to be near the end of the track so a
+//    mid-track pause or track that hasn't finished is not mistaken for finished.
 // 3. A direct-HTTP ("url") track's natural end-of-stream: unlike a pipe
 //    track, OwnTone doesn't pause with the item retained — it wipes the
 //    player back to a blank stop/idle state (item_id 0, length 0, progress
@@ -596,14 +599,25 @@ function mark_confirmed_playing_if_active(array $player, string $path = CONFIRME
 //    outputs), so $hasConfirmedPlaying — whether this item was ever
 //    actually seen playing — must be true before trusting it as "finished"
 //    rather than "not started".
-function queue_should_advance(array $player, int $currentIndex, int $itemCount, bool $pipelineStillRunning = true, bool $hasConfirmedPlaying = false): bool
-{
+function queue_should_advance(
+    array $player,
+    int $currentIndex,
+    int $itemCount,
+    bool $pipelineStillRunning = true,
+    bool $hasConfirmedPlaying = false,
+    bool $isDirect = false,
+    bool $userPaused = false
+): bool {
     if ($currentIndex < 0 || $itemCount <= 0) {
         return false;
     }
 
-    $isPlaying = ($player['state'] ?? '') === 'play';
-    if ($isPlaying) {
+    if ($userPaused) {
+        return false;
+    }
+
+    $state = $player['state'] ?? '';
+    if ($state === 'play') {
         return false;
     }
 
@@ -611,11 +625,15 @@ function queue_should_advance(array $player, int $currentIndex, int $itemCount, 
     $lengthMs = (int) ($player['item_length_ms'] ?? 0);
     $itemId = (int) ($player['item_id'] ?? 0);
 
-    $nearEndByDuration = $lengthMs > 0 && $progressMs >= ($lengthMs - 4000);
-    $pipelineExitedAfterStarting = !$pipelineStillRunning && $progressMs > 0;
-    $wentIdleAfterConfirmedPlaying = $hasConfirmedPlaying && $itemId === 0 && $lengthMs === 0 && $progressMs === 0;
+    if ($state === 'stop') {
+        return $isDirect && $hasConfirmedPlaying && $itemId === 0 && $lengthMs === 0 && $progressMs === 0;
+    }
 
-    return $nearEndByDuration || $pipelineExitedAfterStarting || $wentIdleAfterConfirmedPlaying;
+    $nearEndByDuration = $lengthMs > 0 && $progressMs >= ($lengthMs - 4000);
+    $nearEndByPipelineExit = !$pipelineStillRunning && $lengthMs > 0 && ($progressMs >= max(1000, $lengthMs - 30000) || $progressMs >= (int) ($lengthMs * 0.8));
+    $wentIdleAfterConfirmedPlaying = $isDirect && $hasConfirmedPlaying && $itemId === 0 && $lengthMs === 0 && $progressMs === 0;
+
+    return $nearEndByDuration || $nearEndByPipelineExit || $wentIdleAfterConfirmedPlaying;
 }
 
 // Pure: which index plays next. Sequential mode stops at the end (returns
@@ -1140,12 +1158,18 @@ function handle_owntone_volume(int $volume): void
 
 function handle_owntone_pause(): void
 {
+    $state = read_playback_progress_state();
+    $state['user_paused'] = true;
+    write_playback_progress_state($state);
     owntone_put('/api/player/pause');
     echo json_encode(['status' => 'ok']);
 }
 
 function handle_owntone_resume(): void
 {
+    $state = read_playback_progress_state();
+    $state['user_paused'] = false;
+    write_playback_progress_state($state);
     owntone_put('/api/player/play');
     echo json_encode(['status' => 'ok']);
 }
@@ -1548,6 +1572,9 @@ function advance_queue_if_finished(): void
         $player = owntone_get('/api/player');
         $hasConfirmedPlaying = mark_confirmed_playing_if_active($player);
 
+        $isDirect = is_current_track_direct();
+        $userPaused = is_user_paused();
+
         // is_pipeline_running() only means something for a fifo track (it
         // checks for OUR OWN ffmpeg process) — a direct-HTTP track never has
         // one, so it's always false regardless of whether that track is
@@ -1560,9 +1587,9 @@ function advance_queue_if_finished(): void
         // — that lookup goes blank (item_id 0) during exactly the moments
         // this needs to cover, which defeated an earlier version of this
         // same guard.
-        $pipelineStillRunning = is_current_track_direct() ? true : is_pipeline_running();
+        $pipelineStillRunning = $isDirect ? true : is_pipeline_running();
 
-        if (!queue_should_advance($player, $currentIndex, count($items), $pipelineStillRunning, $hasConfirmedPlaying)) {
+        if (!queue_should_advance($player, $currentIndex, count($items), $pipelineStillRunning, $hasConfirmedPlaying, $isDirect, $userPaused)) {
             return ['advanced' => false];
         }
 
