@@ -224,9 +224,12 @@ assert_true(!queue_should_advance($playingPlayer, 0, 3), 'queue_should_advance i
 
 $midPausePlayer = ['state' => 'pause', 'item_progress_ms' => 5000, 'item_length_ms' => 200000];
 assert_true(!queue_should_advance($midPausePlayer, 0, 3), 'queue_should_advance is false for a genuine mid-track pause, not just finished');
+assert_true(!queue_should_advance($midPausePlayer, 0, 3, false), 'queue_should_advance is false for a mid-track pause even when pipeline exited');
+assert_true(!queue_should_advance($midPausePlayer, 0, 3, false, false, false, true), 'queue_should_advance is false when user explicitly paused');
 
 $finishedPlayer = ['state' => 'pause', 'item_progress_ms' => 199500, 'item_length_ms' => 200000];
 assert_true(queue_should_advance($finishedPlayer, 0, 3), 'queue_should_advance is true when paused at (near) the end');
+assert_true(!queue_should_advance($finishedPlayer, 0, 3, true, false, false, true), 'queue_should_advance is false when user explicitly paused even near end');
 assert_true(queue_should_advance($finishedPlayer, 2, 3), 'queue_should_advance only judges "did it finish", not queue position (that is next_queue_index\'s job)');
 assert_true(!queue_should_advance($finishedPlayer, -1, 3), 'queue_should_advance is false when there is no active queue');
 
@@ -259,12 +262,16 @@ assert_true(
 // identical to "hasn't started playing yet".
 $idlePlayer = ['state' => 'stop', 'item_progress_ms' => 0, 'item_length_ms' => 0, 'item_id' => 0];
 assert_true(
-    !queue_should_advance($idlePlayer, 0, 3, true, false),
+    !queue_should_advance($idlePlayer, 0, 3, true, false, true, false),
     'queue_should_advance stays false on a blank idle player if this item was never confirmed playing (still starting up, not finished)'
 );
 assert_true(
-    queue_should_advance($idlePlayer, 0, 3, true, true),
+    queue_should_advance($idlePlayer, 0, 3, true, true, true, false),
     'queue_should_advance is true on a blank idle player once this item was confirmed playing first (a url track finished)'
+);
+assert_true(
+    !queue_should_advance($idlePlayer, 0, 3, true, true, false, false),
+    'queue_should_advance is false on a stopped player for pipe tracks'
 );
 
 $tmpConfirmedFile = sys_get_temp_dir() . '/backend_test_confirmed_' . uniqid() . '.json';
@@ -285,6 +292,10 @@ assert_true(
 assert_true(
     !is_current_track_direct($tmpConfirmedFile),
     'is_current_track_direct defaults to false (fifo) for a freshly reset state'
+);
+assert_true(
+    !is_user_paused($tmpConfirmedFile),
+    'is_user_paused defaults to false for a freshly reset state'
 );
 mark_current_track_is_direct(true, $tmpConfirmedFile);
 assert_true(is_current_track_direct($tmpConfirmedFile), 'mark_current_track_is_direct(true) is reflected by is_current_track_direct');

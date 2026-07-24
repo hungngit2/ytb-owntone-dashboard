@@ -103,6 +103,8 @@ if (typeof module !== 'undefined' && module.exports) {
     mapPlayerResponse,
     mapQueueResponse,
     sanitizeVolume,
+    clearSearchResults,
+    getSearchResults: () => searchResults,
   };
 }
 
@@ -338,6 +340,14 @@ function cacheLastSearch(results) {
   }).catch(() => {
     // Best-effort only — losing the cross-device cache isn't worth surfacing an error for.
   });
+}
+
+function clearSearchResults() {
+  searchResults = [];
+  cacheLastSearch(searchResults);
+  if (typeof document !== 'undefined') {
+    switchView('search');
+  }
 }
 
 async function runSearch(query) {
@@ -1217,7 +1227,10 @@ if (typeof document !== 'undefined') {
     event.preventDefault();
     const input = document.getElementById('search-input');
     const value = input.value.trim();
-    if (!value) return;
+    if (!value) {
+      clearSearchResults();
+      return;
+    }
 
     if (isYoutubeMixPlaylistUrl(value)) {
       resolveYoutubeMixPlaylist(value);
