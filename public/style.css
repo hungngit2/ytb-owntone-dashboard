@@ -163,15 +163,6 @@ body {
   line-height: 1.2;
 }
 
-/* Its own row in hero-panel (normal document flow, not layered over the
-   disc/transport controls) — confirmed live: overlapping the transport
-   buttons row made it too easy to mis-tap on a narrow/short phone screen. */
-.play-mode-row {
-  display: flex;
-  justify-content: center;
-  margin-bottom: 10px;
-}
-
 .hero-thumb-wrap {
   position: relative;
   width: 80px;
@@ -987,6 +978,14 @@ body {
   .hero-thumb-wrap {
     width: 56px;
     height: 56px;
+  }
+
+  /* Confirmed live: at this compact height, the default bottom:34px put
+     the transport row right on top of the play-mode toggle sitting below
+     the shrunk disc — shifting it closer to the bottom edge clears that
+     without touching the disc/toggle position itself. */
+  .hero-controls {
+    bottom: 20px;
   }
 
   .hero-panel {
