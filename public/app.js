@@ -213,7 +213,11 @@ function loadLocalPlaybackPrefs() {
 
 function applyPlayModeUI() {
   const local = isLocalMode();
-  document.getElementById('stream-btn').hidden = local;
+  // Local mode: always hidden. OwnTone mode: hidden until the next player
+  // poll confirms actual playback, rather than flashing visible right away
+  // on switching back to OwnTone (applyPlayerState is what shows it once
+  // player.isPlaying is actually true).
+  document.getElementById('stream-btn').hidden = local || !lastKnownIsPlaying;
   document.getElementById('ws-status').hidden = local;
   document.getElementById('play-mode-toggle').dataset.mode = playMode;
   document.getElementById('play-mode-toggle-label').textContent = local ? 'Local' : 'OwnTone';
@@ -1445,6 +1449,7 @@ function applyPlayerState(player, queue) {
 
   document.getElementById('play-pause-btn').innerHTML = player.isPlaying ? ICONS.pause : ICONS.play;
   document.getElementById('disc').classList.toggle('spinning', player.isPlaying);
+  document.getElementById('stream-btn').hidden = !player.isPlaying;
 
   const badgeEl = document.getElementById('status-badge');
   badgeEl.textContent = player.isPlaying ? 'PLAYING' : 'IDLE';
