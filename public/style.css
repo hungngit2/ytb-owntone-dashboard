@@ -109,9 +109,14 @@ body {
   gap: 6px;
   background: none;
   border: none;
-  padding: 0;
   cursor: pointer;
   color: var(--text-dim);
+  /* The visual track/label are small — padding here widens the actual tap
+     target to a comfortable touch size (confirmed live: unusably fiddly to
+     hit on an iPhone SE-width viewport otherwise), with a matching negative
+     margin so the button's visual position/layout doesn't shift. */
+  padding: 10px 8px;
+  margin: -10px -8px;
 }
 
 .play-mode-toggle:hover {
