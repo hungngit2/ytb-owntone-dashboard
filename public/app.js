@@ -220,7 +220,7 @@ function applyPlayModeUI() {
   document.getElementById('stream-btn').hidden = local || !lastKnownIsPlaying;
   document.getElementById('ws-status').hidden = local;
   document.getElementById('play-mode-toggle').dataset.mode = playMode;
-  document.getElementById('play-mode-toggle-label').textContent = local ? 'Local' : 'OwnTone';
+  document.getElementById('play-mode-toggle-label').textContent = local ? 'Local' : '';
   document.getElementById('progress-track').classList.toggle('seekable', local || Boolean(serverQueue.seekable));
   if (local) {
     loadLocalPlaybackPrefs();
