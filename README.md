@@ -2,8 +2,9 @@
 
 A dark-mode, single-page PHP + vanilla JS dashboard for a home server running
 [OwnTone](https://github.com/owntone/owntone-server). Search or paste a
-YouTube URL, save songs into named playlists, and play through OwnTone by
-piping audio into a named pipe.
+YouTube URL, save songs into named playlists, and play through OwnTone —
+or entirely in the browser, without OwnTone at all, via a "Local" mode
+toggle.
 
 ![Dashboard screenshot](docs/screenshot.png)
 
@@ -22,13 +23,31 @@ piping audio into a named pipe.
   - Plain text searches YouTube's official **Data API v3 directly from the
     browser** (30 results). Both this and the playlist import run entirely
     client-side — the backend is never involved, so it can't load the server.
-- Clicking Play kills any in-flight stream, tells OwnTone to queue and start
-  that track, then launches a detached `yt-dlp | ffmpeg -re` pipeline that
-  writes WAV audio into OwnTone's named pipe at real playback speed (not a
-  burst — OwnTone needs time to attach as a live reader). A second pipe
-  carries real title/artist/duration/artwork metadata to OwnTone itself
-  (shairport-sync's pipe metadata protocol), so OwnTone's own "now playing"
-  shows more than the generic pipe filename.
+- **OwnTone / Local mode toggle** (top-right of the hero, next to the
+  status indicators): switches between the two ways this app can actually
+  play audio.
+  - **OwnTone mode** (default): the backend queues the track on your
+    OwnTone server, which does the actual decoding/output — playback keeps
+    going through whatever real speakers/AirPlay outputs OwnTone is
+    configured with, independent of this browser tab.
+  - **Local mode**: the browser plays the track directly itself, via a
+    plain `<audio>` element pointed at a backend-resolved direct stream
+    URL — no OwnTone involved at all. Useful when OwnTone isn't reachable,
+    or you just want to listen through the device you're using right now.
+    Its own queue, shuffle/repeat, and auto-advance state persist to
+    `localStorage` (see `LS_KEYS` in `app.js`) so they survive a reload,
+    but this mode has no server-side daemon — auto-advance only happens
+    while this tab stays open.
+- Clicking Play resolves the video to a real playable URL server-side
+  (`resolve_direct_stream_url` in `backend.php`, via `yt-dlp -g`) and hands
+  that straight to OwnTone as a direct HTTP-stream queue item — no local
+  transcoding pipeline needed in the common case. If that fails (a CDN
+  403, or OwnTone can't open it), it falls back to the older path: a
+  detached `yt-dlp | ffmpeg -re` pipeline writing WAV audio into a named
+  pipe OwnTone reads as a library track, with a second pipe carrying
+  shairport-sync-style metadata. The hero shows a small **FIFO badge**
+  whenever a track is playing through this fallback, so it's obvious which
+  path is active.
 - The UI stays in sync with OwnTone over its WebSocket API for play/pause/
   volume state, with a local 1-second ticker interpolating the progress bar
   between syncs (OwnTone's WebSocket only pushes on state changes, not a
@@ -39,23 +58,26 @@ piping audio into a named pipe.
   currently-playing row is highlighted, matched by YouTube video id (not a
   raw URL string, since the same video can appear as `watch?v=`, `youtu.be/`,
   or with extra query params depending on where it came from).
-- **Auto-play-next survives the browser being closed.** Playing anything
-  persists the whole list + starting index server-side
+- **Auto-play-next survives the browser being closed** (OwnTone mode only).
+  Playing anything persists the whole list + starting index server-side
   (`queue_state.json`), and a separate always-running process,
   `bin/queue-daemon.php` (see Setup), polls OwnTone every 2s and starts the
   next item itself once the current one actually finishes — no browser tab
-  needs to stay open for this to work. A shuffle toggle changes what
-  "next" means (random, never repeating the current item) and can be
-  flipped mid-playlist without interrupting what's currently playing. A
-  repeat toggle (off / repeat-all / repeat-one, cycled by one button)
-  changes what happens once the queue runs out: stop (off), wrap back to
-  the first item (all), or replay the same track indefinitely (one) —
-  both toggles are persisted server-side (`shuffle`/`repeat` in
-  `queue_state.json`) so `bin/queue-daemon.php` honors them with no
+  needs to stay open for this to work. An **auto-next toggle** (the
+  play/pause-icon switch next to the transport controls) turns this off
+  entirely when you don't want the queue to advance on its own; it's
+  persisted the same way (`auto_advance` in `queue_state.json`, or
+  `localStorage` in Local mode). A shuffle toggle changes what "next"
+  means (random, never repeating the current item) and can be flipped
+  mid-playlist without interrupting what's currently playing. A repeat
+  toggle (off / repeat-all / repeat-one, cycled by one button) changes what
+  happens once the queue runs out: stop (off), wrap back to the first item
+  (all), or replay the same track indefinitely (one) — all three toggles
+  are persisted server-side so `bin/queue-daemon.php` honors them with no
   browser involved. The next sequential track is also pre-downloaded in
   the background while the current one plays (see "Preloading the next
-  track" below), so switching is close to instant instead of waiting on
-  yt-dlp each time.
+  track" below), so falling back to the fifo path is close to instant
+  instead of waiting on yt-dlp each time.
 - The last search and all playlists are cached server-side (as JSON files)
   so a page refresh or a different browser sees the same thing.
 - **The now-playing title scrolls (marquee) instead of truncating** when
@@ -63,15 +85,21 @@ piping audio into a named pipe.
   auto-scrolls into view** in the results/playlist list whenever the
   playing track changes (not on every periodic sync, so it doesn't fight
   you scrolling to browse other results while something plays).
+- Clicking the **hero thumbnail** opens the resolved direct CDN audio URL
+  in a new tab (bypassing OwnTone entirely); clicking the **track title**
+  opens the regular YouTube watch page instead.
 
 ## Requirements
 
 - PHP (via Apache/Nginx + php-fpm)
 - `yt-dlp` and `ffmpeg` on `PATH` for the **PHP-FPM process user**
-  specifically (not just your login shell) — used only for playback
-  (download + transcode + duration lookup), never for search
+  specifically (not just your login shell) — used for resolving direct
+  stream URLs, the fifo fallback pipeline, and duration lookups; never for
+  search
 - A running OwnTone server on the same host, reachable at `127.0.0.1:3689`
-- An OwnTone library pipe source already configured (see Setup below)
+  — the fifo fallback also needs an OwnTone library pipe source configured
+  (see Setup below); the direct-stream path doesn't need any OwnTone-side
+  config beyond a normal working install
 - A free **YouTube Data API v3** key (see Setup) — required for search to
   work at all, since search runs against Google's API, not `yt-dlp`
 
@@ -79,17 +107,20 @@ piping audio into a named pipe.
 
 ```
 public/   web root — point your vhost's DocumentRoot here
-  index.php            page shell
-  backend.php          play/playlist/queue/cache API (POST action=...)
-  app.js               vanilla JS: search, playback, playlists, OwnTone sync
-  style.css            dark-mode layout
-  config.js            YouTube API key (gitignored — you create this)
-  config.example.js     ^ template for the above, committed
+  index.php               page shell (also runs enforce_dashboard_auth())
+  backend.php             play/playlist/queue/cache/OwnTone-proxy API (POST action=...)
+  app.js                  vanilla JS: search, playback, playlists, OwnTone sync, Local mode
+  style.css               dark-mode layout
+  config.js               YouTube API key (gitignored — you create this)
+  config.example.js        ^ template for the above, committed
+  owntone-auth.php        OwnTone basic auth creds, if enabled (gitignored — you create this)
+  owntone-auth.example.php ^ template for the above, committed
+  dashboard-auth.php      this app's own login creds, if enabled (gitignored — you create this)
+  dashboard-auth.example.php ^ template for the above, committed
 bin/
   queue-daemon.php      standalone process: polls OwnTone, auto-advances the queue
 docs/
   queue-daemon.service  systemd unit for bin/queue-daemon.php
-  (design spec and implementation plan)
 tests/    PHP/Node unit tests for the pure/testable logic
 ```
 
@@ -170,7 +201,37 @@ process, not something any browser tab drives.
    ```
 4. `systemctl status queue-daemon.service` should show `Active: active (running)`.
 
-### 6. Open the site
+### 6. OwnTone basic auth (optional)
+
+If you turn on basic auth in OwnTone's own web interface (Settings > Web
+Interface), `backend.php` needs those credentials to keep talking to it —
+the browser never sees them; only `backend.php`'s server-side curl calls do.
+
+1. Copy `public/owntone-auth.example.php` to `public/owntone-auth.php` and
+   fill in `OWNTONE_AUTH_USERNAME`/`OWNTONE_AUTH_PASSWORD`.
+2. That covers the JSON API, artwork, and `stream.mp3` — all proxied
+   through `backend.php`. OwnTone's websocket (used for live play/pause/
+   volume updates) is a direct browser connection that can't carry a
+   custom `Authorization` header, so it needs its own way to authenticate
+   if you want it reachable outside your LAN.
+
+### 7. This app's own login (optional)
+
+`enforce_dashboard_auth()` (called from both `index.php` and
+`backend.php`) can require HTTP Basic Auth for the dashboard itself.
+
+1. Copy `public/dashboard-auth.example.php` to `public/dashboard-auth.php`
+   and fill in `DASHBOARD_AUTH_USERNAME`/`DASHBOARD_AUTH_PASSWORD`.
+2. By default this only applies to clients whose IP **isn't** private/LAN
+   (10/8, 172.16/12, 192.168/16, 127/8, `::1`) — so it's normally invisible
+   on your own network and only kicks in for remote/public access. Set
+   `DASHBOARD_FORCE_AUTH_FOR_LOCAL` to `true` to require it from everyone,
+   LAN included.
+3. This only covers `index.php`/`backend.php` — plain static assets
+   (`app.js`, `style.css`, `config.js`) are served straight by your web
+   server without going through PHP, so they aren't covered by this check.
+
+### 8. Open the site
 
 Open it in a browser on the same LAN as the server.
 
