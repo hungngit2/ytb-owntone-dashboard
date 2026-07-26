@@ -50,6 +50,13 @@ enforce_dashboard_auth();
           <button id="next-btn" aria-label="Next"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6l9.5 6L6 18V6zM16 6h2v12h-2z"/></svg></button>
           <button id="stop-btn" aria-label="Stop" title="Stop"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12"/></svg></button>
           <button id="stream-btn" aria-label="Listen in browser" title="Listen in browser (direct stream)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor" stroke="none"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg></button>
+          <button id="auto-advance-btn" type="button" class="auto-advance-toggle active" title="Auto-play next track">
+            <span class="auto-advance-track"></span>
+            <span class="auto-advance-thumb">
+              <svg class="icon-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+              <svg class="icon-pause" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>
+            </span>
+          </button>
         </div>
         <audio id="browser-stream-audio" preload="none"></audio>
 
@@ -84,13 +91,6 @@ enforce_dashboard_auth();
     <div id="view-tabs">
       <button id="tab-search" type="button" class="view-tab active">Search</button>
       <button id="tab-playlist" type="button" class="view-tab">Playlist</button>
-      <button id="auto-advance-btn" type="button" class="auto-advance-toggle active" title="Auto-play next track">
-        <span class="auto-advance-track"></span>
-        <span class="auto-advance-thumb">
-          <svg class="icon-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-          <svg class="icon-pause" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>
-        </span>
-      </button>
     </div>
 
     <div id="playlist-controls" style="display: none;">

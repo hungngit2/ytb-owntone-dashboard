@@ -620,8 +620,6 @@ body {
 }
 
 .auto-advance-toggle {
-  margin-left: auto;
-  align-self: center;
   position: relative;
   width: 46px;
   height: 26px;
