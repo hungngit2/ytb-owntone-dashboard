@@ -21,10 +21,6 @@ enforce_dashboard_auth();
           <div id="disc" class="hero-thumb-wrap">
             <img id="disc-thumb" class="hero-thumb" alt="">
           </div>
-          <button type="button" id="play-mode-toggle" class="play-mode-toggle" data-mode="owntone" title="Switch between OwnTone and Local playback">
-            <span class="play-mode-toggle-track"><span class="play-mode-toggle-thumb"></span></span>
-            <span id="play-mode-toggle-label" class="play-mode-toggle-label">OwnTone</span>
-          </button>
         </div>
 
         <div class="hero-text">
@@ -34,6 +30,10 @@ enforce_dashboard_auth();
 
         <div class="hero-top-right">
           <div class="hero-status-row">
+            <button type="button" id="play-mode-toggle" class="play-mode-toggle" data-mode="owntone" title="Switch between OwnTone and Local playback">
+              <span class="play-mode-toggle-track"><span class="play-mode-toggle-thumb"></span></span>
+              <span id="play-mode-toggle-label" class="play-mode-toggle-label">OwnTone</span>
+            </button>
             <span id="status-badge">IDLE</span>
             <span id="fifo-badge" title="Playing via the fifo pipeline (direct stream unavailable for this track)" hidden>FIFO</span>
             <span id="ws-status" title="OwnTone connection status">●</span>
