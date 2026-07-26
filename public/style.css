@@ -163,6 +163,15 @@ body {
   line-height: 1.2;
 }
 
+/* Its own row in hero-panel (normal document flow, not layered over the
+   disc/transport controls) — confirmed live: overlapping the transport
+   buttons row made it too easy to mis-tap on a narrow/short phone screen. */
+.play-mode-row {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 10px;
+}
+
 .hero-thumb-wrap {
   position: relative;
   width: 80px;
