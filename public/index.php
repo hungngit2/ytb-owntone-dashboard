@@ -37,6 +37,7 @@ enforce_dashboard_auth();
             <span id="status-badge">IDLE</span>
             <span id="fifo-badge" title="Playing via the fifo pipeline (direct stream unavailable for this track)" hidden>FIFO</span>
             <span id="ws-status" title="OwnTone connection status">●</span>
+            <button id="stream-btn" aria-label="Listen in browser" title="Listen in browser (direct stream)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor" stroke="none"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg></button>
           </div>
           <div class="hero-toggle-row">
             <button id="shuffle-btn" aria-label="Shuffle" title="Shuffle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg></button>
@@ -47,9 +48,8 @@ enforce_dashboard_auth();
         <div class="hero-controls">
           <button id="prev-btn" aria-label="Previous"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6L19 18V6z"/></svg></button>
           <button id="play-pause-btn" aria-label="Play/pause"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></button>
-          <button id="next-btn" aria-label="Next"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6l9.5 6L6 18V6zM16 6h2v12h-2z"/></svg></button>
           <button id="stop-btn" aria-label="Stop" title="Stop"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12"/></svg></button>
-          <button id="stream-btn" aria-label="Listen in browser" title="Listen in browser (direct stream)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor" stroke="none"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg></button>
+          <button id="next-btn" aria-label="Next"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6l9.5 6L6 18V6zM16 6h2v12h-2z"/></svg></button>
           <button id="auto-advance-btn" type="button" class="auto-advance-toggle active" title="Auto-play next track">
             <span class="auto-advance-track"></span>
             <span class="auto-advance-thumb">
