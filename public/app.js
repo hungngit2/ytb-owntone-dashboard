@@ -265,24 +265,33 @@ async function setPlayMode(mode) {
     return;
   }
 
-  if (playMode === 'local') {
-    await stopLocalPlayback();
-  } else {
-    disconnectOwnToneLiveUpdates();
-    try {
-      await fetch('backend.php', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: 'action=stop',
-      });
-    } catch (err) {
-      // Best-effort — switching modes should still continue.
-    }
-  }
+  const toggleBtn = document.getElementById('play-mode-toggle');
+  toggleBtn.classList.add('loading');
+  toggleBtn.disabled = true;
 
-  playMode = mode;
-  localStorage.setItem(LS_KEYS.playMode, playMode);
-  applyPlayModeUI();
+  try {
+    if (playMode === 'local') {
+      await stopLocalPlayback();
+    } else {
+      disconnectOwnToneLiveUpdates();
+      try {
+        await fetch('backend.php', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: 'action=stop',
+        });
+      } catch (err) {
+        // Best-effort — switching modes should still continue.
+      }
+    }
+
+    playMode = mode;
+    localStorage.setItem(LS_KEYS.playMode, playMode);
+    applyPlayModeUI();
+  } finally {
+    toggleBtn.classList.remove('loading');
+    toggleBtn.disabled = false;
+  }
 
   if (isLocalMode()) {
     disconnectOwnToneLiveUpdates();
