@@ -450,6 +450,14 @@ body {
   color: var(--accent);
 }
 
+/* #stream-btn's own display:flex above outranks the browser's default
+   [hidden] { display: none } (an ID selector beats an attribute one) —
+   without this, setting stream-btn.hidden = true in Local mode never
+   actually hid it (confirmed live). */
+#stream-btn[hidden] {
+  display: none;
+}
+
 .hero-progress {
   position: absolute;
   bottom: 0;
@@ -991,7 +999,7 @@ body {
      the shrunk disc — shifting it closer to the bottom edge clears that
      without touching the disc/toggle position itself. */
   .hero-controls {
-    bottom: 20px;
+    bottom: 12px;
   }
 
   .hero-panel {
