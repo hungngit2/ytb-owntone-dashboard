@@ -117,6 +117,12 @@ body {
      margin so the button's visual position/layout doesn't shift. */
   padding: 10px 8px;
   margin: -10px -8px;
+  /* That padding extends the clickable box below its visual position, far
+     enough to reach into .hero-controls below it — same z-index there
+     (and later in the DOM) was winning ties and swallowing taps meant for
+     this toggle. Raising this above it fixes that (confirmed live). */
+  position: relative;
+  z-index: 3;
 }
 
 .play-mode-toggle:hover {
