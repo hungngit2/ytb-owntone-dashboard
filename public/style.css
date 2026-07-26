@@ -103,34 +103,59 @@ body {
   gap: 6px;
 }
 
-.play-mode-row {
+.play-mode-toggle {
   display: flex;
-  gap: 4px;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--text-dim);
 }
 
-.play-mode-btn {
+.play-mode-toggle:hover {
+  color: var(--text);
+}
+
+.play-mode-toggle-track {
+  position: relative;
+  width: 28px;
+  height: 15px;
+  border-radius: 999px;
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  background: rgba(15, 23, 42, 0.55);
+  flex-shrink: 0;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.play-mode-toggle-thumb {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  transition: transform 0.15s, background 0.15s;
+}
+
+.play-mode-toggle[data-mode="local"] .play-mode-toggle-track {
+  background: rgba(99, 102, 241, 0.45);
+  border-color: rgba(99, 102, 241, 0.7);
+}
+
+.play-mode-toggle[data-mode="local"] .play-mode-toggle-thumb {
+  transform: translateX(13px);
+  background: #fff;
+}
+
+.play-mode-toggle-label {
   font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.02em;
   text-transform: uppercase;
-  padding: 3px 7px;
-  border-radius: 999px;
-  border: 1px solid rgba(99, 102, 241, 0.35);
-  background: rgba(15, 23, 42, 0.55);
-  color: var(--text-dim);
-  cursor: pointer;
   line-height: 1.2;
-}
-
-.play-mode-btn:hover {
-  color: var(--text);
-  border-color: rgba(99, 102, 241, 0.55);
-}
-
-.play-mode-btn.active {
-  color: #fff;
-  background: rgba(99, 102, 241, 0.45);
-  border-color: rgba(99, 102, 241, 0.7);
 }
 
 .hero-thumb-wrap {
@@ -573,6 +598,32 @@ body {
 .view-tab.active {
   color: var(--text);
   border-bottom-color: var(--accent);
+}
+
+.auto-advance-btn {
+  margin-left: auto;
+  align-self: center;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  background: rgba(15, 23, 42, 0.55);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.auto-advance-btn:hover {
+  color: var(--text);
+  border-color: rgba(99, 102, 241, 0.55);
+}
+
+.auto-advance-btn.active {
+  color: #fff;
+  background: rgba(99, 102, 241, 0.45);
+  border-color: rgba(99, 102, 241, 0.7);
 }
 
 /* ---- Playlist controls ---- */

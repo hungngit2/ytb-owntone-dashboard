@@ -199,7 +199,7 @@ rmdir(dirname($tmpSearchFile));
 $tmpQueueFile = sys_get_temp_dir() . '/queue_state_test_' . uniqid() . '/queue_state.json';
 $emptyQueueState = load_queue_state($tmpQueueFile);
 assert_true(
-    $emptyQueueState === ['items' => [], 'current_index' => -1, 'shuffle' => false, 'repeat' => 'off'],
+    $emptyQueueState === ['items' => [], 'current_index' => -1, 'shuffle' => false, 'repeat' => 'off', 'auto_advance' => true],
     'load_queue_state returns an empty queue when file does not exist'
 );
 

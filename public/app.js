@@ -121,7 +121,20 @@ const LS_KEYS = {
   volume: 'ytb-tone-local-volume',
   shuffle: 'ytb-tone-local-shuffle',
   repeat: 'ytb-tone-local-repeat',
+  autoAdvance: 'ytb-tone-local-auto-advance',
+  queue: 'ytb-tone-local-queue',
 };
+
+function saveLocalQueue() {
+  writeLocalStorageJson(LS_KEYS.queue, localQueue);
+}
+
+function loadLocalQueue() {
+  const stored = readLocalStorageJson(LS_KEYS.queue, null);
+  if (stored && Array.isArray(stored.items) && Number.isInteger(stored.current_index)) {
+    localQueue = stored;
+  }
+}
 
 let playMode = 'owntone';
 let localQueue = { items: [], current_index: -1 };
@@ -180,11 +193,13 @@ function loadLocalPlaylistsFromStorage() {
 function saveLocalPlaybackPrefs() {
   localStorage.setItem(LS_KEYS.shuffle, shuffleEnabled ? '1' : '');
   localStorage.setItem(LS_KEYS.repeat, repeatMode);
+  localStorage.setItem(LS_KEYS.autoAdvance, autoAdvanceEnabled ? '1' : '0');
 }
 
 function loadLocalPlaybackPrefs() {
   shuffleEnabled = localStorage.getItem(LS_KEYS.shuffle) === '1';
   repeatMode = localStorage.getItem(LS_KEYS.repeat) || 'off';
+  autoAdvanceEnabled = localStorage.getItem(LS_KEYS.autoAdvance) !== '0';
   const storedVolume = Number(localStorage.getItem(LS_KEYS.volume));
   if (Number.isFinite(storedVolume) && storedVolume >= 0 && storedVolume <= 100) {
     reflectVolumeUI(storedVolume);
@@ -192,15 +207,16 @@ function loadLocalPlaybackPrefs() {
   }
   document.getElementById('shuffle-btn').classList.toggle('active', shuffleEnabled);
   reflectRepeatUI();
+  reflectAutoAdvanceUI();
+  loadLocalQueue();
 }
 
 function applyPlayModeUI() {
   const local = isLocalMode();
   document.getElementById('stream-btn').hidden = local;
   document.getElementById('ws-status').hidden = local;
-  document.querySelectorAll('.play-mode-btn').forEach((btn) => {
-    btn.classList.toggle('active', btn.dataset.mode === playMode);
-  });
+  document.getElementById('play-mode-toggle').dataset.mode = playMode;
+  document.getElementById('play-mode-toggle-label').textContent = local ? 'Local' : 'OwnTone';
   document.getElementById('progress-track').classList.toggle('seekable', local || Boolean(serverQueue.seekable));
   if (local) {
     loadLocalPlaybackPrefs();
@@ -214,6 +230,7 @@ async function stopLocalPlayback() {
   audio.load();
   currentTrackInfo = { title: null, thumbnail: null, channel: null, webpageUrl: null };
   localQueue = { items: [], current_index: -1 };
+  saveLocalQueue();
   lastKnownIsPlaying = false;
   renderNowPlaying();
   applyLocalPlayerState(false, 0, 0);
@@ -952,6 +969,8 @@ async function syncServerQueue() {
     document.getElementById('shuffle-btn').classList.toggle('active', shuffleEnabled);
     repeatMode = serverQueue.repeat || 'off';
     reflectRepeatUI();
+    autoAdvanceEnabled = serverQueue.auto_advance !== false;
+    reflectAutoAdvanceUI();
     document.getElementById('progress-track').classList.toggle('seekable', Boolean(serverQueue.seekable));
     renderNowPlaying(lastKnownQueueTitle);
     updateCookingIndicator();
@@ -1167,7 +1186,7 @@ function updateLocalProgressFromAudio() {
 }
 
 function handleLocalTrackEnded() {
-  if (!isLocalMode()) {
+  if (!isLocalMode() || !autoAdvanceEnabled) {
     return;
   }
   const nextIndex = nextLocalQueueIndex(localQueue.current_index, localQueue.items.length, shuffleEnabled, repeatMode);
@@ -1206,6 +1225,7 @@ async function playLocalQueueItem(items, index, triggerBtn) {
       webpageUrl: item.webpage_url,
     };
     localQueue = { items, current_index: index };
+    saveLocalQueue();
 
     audio.src = `backend.php?action=stream_redirect&url=${encodeURIComponent(item.webpage_url)}`;
     audio.volume = Number(document.getElementById('volume-slider').value) / 100;
@@ -1235,11 +1255,16 @@ async function playLocalQueueItem(items, index, triggerBtn) {
 
 let shuffleEnabled = false;
 let repeatMode = 'off'; // 'off' | 'all' | 'one' — mirrors serverQueue.repeat
+let autoAdvanceEnabled = true; // mirrors serverQueue.auto_advance
 
 function reflectRepeatUI() {
   const btn = document.getElementById('repeat-btn');
   btn.classList.toggle('active', repeatMode !== 'off');
   btn.classList.toggle('repeat-one', repeatMode === 'one');
+}
+
+function reflectAutoAdvanceUI() {
+  document.getElementById('auto-advance-btn').classList.toggle('active', autoAdvanceEnabled);
 }
 
 // Only one play/seek/stop request in flight at a time from this tab.
@@ -1511,7 +1536,7 @@ function updateProgressDisplay(progressSeconds, durationSeconds) {
   const pct = durationSeconds > 0 ? (progressSeconds / durationSeconds) * 100 : 0;
   document.getElementById('progress-fill').style.width = `${pct}%`;
   document.getElementById('time-current').textContent = formatTime(Math.floor(progressSeconds));
-  document.getElementById('time-total').textContent = formatTime(durationSeconds);
+  document.getElementById('time-total').textContent = formatTime(Math.floor(durationSeconds));
 }
 
 async function seekTo(targetSeconds) {
@@ -1677,6 +1702,20 @@ if (typeof document !== 'undefined') {
     }).catch(() => {});
   });
 
+  document.getElementById('auto-advance-btn').addEventListener('click', () => {
+    autoAdvanceEnabled = !autoAdvanceEnabled;
+    reflectAutoAdvanceUI();
+    if (isLocalMode()) {
+      saveLocalPlaybackPrefs();
+      return;
+    }
+    fetch('backend.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `action=set_auto_advance&auto_advance=${autoAdvanceEnabled ? '1' : ''}`,
+    }).catch(() => {});
+  });
+
   document.getElementById('repeat-btn').addEventListener('click', () => {
     repeatMode = repeatMode === 'off' ? 'all' : repeatMode === 'all' ? 'one' : 'off';
     reflectRepeatUI();
@@ -1825,10 +1864,8 @@ if (typeof document !== 'undefined') {
     }
   });
 
-  document.querySelectorAll('.play-mode-btn').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      setPlayMode(btn.dataset.mode);
-    });
+  document.getElementById('play-mode-toggle').addEventListener('click', () => {
+    setPlayMode(isLocalMode() ? 'owntone' : 'local');
   });
 
   const localAudio = document.getElementById('browser-stream-audio');

@@ -21,10 +21,10 @@ enforce_dashboard_auth();
           <div id="disc" class="hero-thumb-wrap">
             <img id="disc-thumb" class="hero-thumb" alt="">
           </div>
-          <div id="play-mode-row" class="play-mode-row">
-            <button type="button" class="play-mode-btn active" data-mode="owntone">OwnTone</button>
-            <button type="button" class="play-mode-btn" data-mode="local">Local</button>
-          </div>
+          <button type="button" id="play-mode-toggle" class="play-mode-toggle" data-mode="owntone" title="Switch between OwnTone and Local playback">
+            <span class="play-mode-toggle-track"><span class="play-mode-toggle-thumb"></span></span>
+            <span id="play-mode-toggle-label" class="play-mode-toggle-label">OwnTone</span>
+          </button>
         </div>
 
         <div class="hero-text">
@@ -84,6 +84,7 @@ enforce_dashboard_auth();
     <div id="view-tabs">
       <button id="tab-search" type="button" class="view-tab active">Search</button>
       <button id="tab-playlist" type="button" class="view-tab">Playlist</button>
+      <button id="auto-advance-btn" type="button" class="auto-advance-btn active" title="Auto-play next track">Auto-next</button>
     </div>
 
     <div id="playlist-controls" style="display: none;">

@@ -466,12 +466,12 @@ function save_last_search(array $results, string $path = LAST_SEARCH_FILE): void
 function load_queue_state(string $path = QUEUE_STATE_FILE): array
 {
     if (!file_exists($path)) {
-        return ['items' => [], 'current_index' => -1, 'shuffle' => false, 'repeat' => 'off'];
+        return ['items' => [], 'current_index' => -1, 'shuffle' => false, 'repeat' => 'off', 'auto_advance' => true];
     }
 
     $decoded = json_decode((string) file_get_contents($path), true);
     if (!is_array($decoded) || !isset($decoded['items']) || !is_array($decoded['items'])) {
-        return ['items' => [], 'current_index' => -1, 'shuffle' => false, 'repeat' => 'off'];
+        return ['items' => [], 'current_index' => -1, 'shuffle' => false, 'repeat' => 'off', 'auto_advance' => true];
     }
 
     $repeat = $decoded['repeat'] ?? 'off';
@@ -484,17 +484,18 @@ function load_queue_state(string $path = QUEUE_STATE_FILE): array
         'current_index' => (int) ($decoded['current_index'] ?? -1),
         'shuffle' => (bool) ($decoded['shuffle'] ?? false),
         'repeat' => $repeat,
+        'auto_advance' => (bool) ($decoded['auto_advance'] ?? true),
     ];
 }
 
-function save_queue_state(array $items, int $currentIndex, bool $shuffle = false, string $repeat = 'off', string $path = QUEUE_STATE_FILE): void
+function save_queue_state(array $items, int $currentIndex, bool $shuffle = false, string $repeat = 'off', string $path = QUEUE_STATE_FILE, bool $autoAdvance = true): void
 {
     $dir = dirname($path);
     if (!is_dir($dir)) {
         mkdir($dir, 0755, true);
     }
 
-    file_put_contents($path, json_encode(['items' => $items, 'current_index' => $currentIndex, 'shuffle' => $shuffle, 'repeat' => $repeat]));
+    file_put_contents($path, json_encode(['items' => $items, 'current_index' => $currentIndex, 'shuffle' => $shuffle, 'repeat' => $repeat, 'auto_advance' => $autoAdvance]));
 }
 
 function read_playback_progress_state(string $path = CONFIRMED_PLAYING_FILE): array
@@ -1493,12 +1494,13 @@ function handle_play_queue(array $items, int $index, bool $shuffle, string $repe
 
     $url = $items[$index]['webpage_url'];
     $cachedAudioPath = resolve_cached_audio_path($url);
+    $autoAdvance = load_queue_state()['auto_advance'];
 
     // Saving the new queue state and actually playing it must happen under
     // ONE lock acquisition — see play_url_body's comment for the race this
     // closes (the daemon polling in the gap between two separate locks).
-    $result = with_playback_lock(function () use ($items, $index, $shuffle, $repeat, $url, $cachedAudioPath) {
-        save_queue_state($items, $index, $shuffle, $repeat);
+    $result = with_playback_lock(function () use ($items, $index, $shuffle, $repeat, $url, $cachedAudioPath, $autoAdvance) {
+        save_queue_state($items, $index, $shuffle, $repeat, QUEUE_STATE_FILE, $autoAdvance);
         return play_url_body($url, 0, $cachedAudioPath);
     });
     maybe_preload_next($items, $index, $shuffle, $repeat);
@@ -1525,7 +1527,7 @@ function handle_stop(): void
 function handle_set_shuffle(bool $shuffle): void
 {
     $state = load_queue_state();
-    save_queue_state($state['items'], $state['current_index'], $shuffle, $state['repeat']);
+    save_queue_state($state['items'], $state['current_index'], $shuffle, $state['repeat'], QUEUE_STATE_FILE, $state['auto_advance']);
     echo json_encode(['status' => 'ok']);
 }
 
@@ -1537,7 +1539,14 @@ function handle_set_repeat(string $repeat): void
         return;
     }
     $state = load_queue_state();
-    save_queue_state($state['items'], $state['current_index'], $state['shuffle'], $repeat);
+    save_queue_state($state['items'], $state['current_index'], $state['shuffle'], $repeat, QUEUE_STATE_FILE, $state['auto_advance']);
+    echo json_encode(['status' => 'ok']);
+}
+
+function handle_set_auto_advance(bool $autoAdvance): void
+{
+    $state = load_queue_state();
+    save_queue_state($state['items'], $state['current_index'], $state['shuffle'], $state['repeat'], QUEUE_STATE_FILE, $autoAdvance);
     echo json_encode(['status' => 'ok']);
 }
 
@@ -1569,6 +1578,10 @@ function advance_queue_if_finished(): void
         $shuffle = $state['shuffle'];
         $repeat = $state['repeat'];
 
+        if (!$state['auto_advance']) {
+            return ['advanced' => false];
+        }
+
         $player = owntone_get('/api/player');
         $hasConfirmedPlaying = mark_confirmed_playing_if_active($player);
 
@@ -1599,7 +1612,7 @@ function advance_queue_if_finished(): void
             return ['advanced' => false];
         }
 
-        save_queue_state($items, $nextIndex, $shuffle, $repeat);
+        save_queue_state($items, $nextIndex, $shuffle, $repeat, QUEUE_STATE_FILE, $state['auto_advance']);
         $nextUrl = $items[$nextIndex]['webpage_url'] ?? '';
         play_url_body($nextUrl, 0, resolve_cached_audio_path($nextUrl));
 
@@ -1650,6 +1663,8 @@ if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
         handle_set_shuffle((bool) ($_POST['shuffle'] ?? false));
     } elseif ($action === 'set_repeat') {
         handle_set_repeat((string) ($_POST['repeat'] ?? 'off'));
+    } elseif ($action === 'set_auto_advance') {
+        handle_set_auto_advance((bool) ($_POST['auto_advance'] ?? false));
     } elseif ($action === 'stop') {
         handle_stop();
     } elseif ($action === 'seek') {
