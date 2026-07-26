@@ -86,7 +86,10 @@ enforce_dashboard_auth();
       <button id="tab-playlist" type="button" class="view-tab">Playlist</button>
       <button id="auto-advance-btn" type="button" class="auto-advance-toggle active" title="Auto-play next track">
         <span class="auto-advance-track"></span>
-        <span class="auto-advance-thumb"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span>
+        <span class="auto-advance-thumb">
+          <svg class="icon-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+          <svg class="icon-pause" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></svg>
+        </span>
       </button>
     </div>
 

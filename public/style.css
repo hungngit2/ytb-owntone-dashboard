@@ -616,9 +616,13 @@ body {
   position: absolute;
   inset: 0;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.85);
+  background: #c7ccd1;
   border: 2px solid #1e1e1e;
   transition: background 0.15s;
+}
+
+.auto-advance-toggle.active .auto-advance-track {
+  background: #f4f5f6;
 }
 
 .auto-advance-thumb {
@@ -629,24 +633,35 @@ body {
   height: 26px;
   transform: translate(0, -50%);
   border-radius: 50%;
-  background: #94a3b8;
+  background: #24303d;
   border: 2px solid #1e1e1e;
   display: flex;
   align-items: center;
   justify-content: center;
   color: #fff;
-  transition: transform 0.15s, background 0.15s;
+  transition: transform 0.15s;
 }
 
 .auto-advance-thumb svg {
   width: 12px;
   height: 12px;
+  display: none;
+}
+
+.auto-advance-thumb .icon-play {
   margin-left: 1px; /* optically center the play triangle */
 }
 
 .auto-advance-toggle.active .auto-advance-thumb {
   transform: translate(20px, -50%);
-  background: linear-gradient(135deg, #f26b5e, #e5493a);
+}
+
+.auto-advance-toggle.active .auto-advance-thumb .icon-play {
+  display: block;
+}
+
+.auto-advance-toggle:not(.active) .auto-advance-thumb .icon-pause {
+  display: block;
 }
 
 /* ---- Playlist controls ---- */
