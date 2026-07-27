@@ -844,17 +844,21 @@ function handle_stream_redirect(string $url): void
         return;
     }
 
-    // Reuse whatever attempt_direct_http_play already resolved for this
-    // exact track at play time — this is almost always a click on the
-    // currently-playing track's thumbnail, so this skips a redundant
-    // yt-dlp invocation (the slow part) in the common case. Falls back to
-    // a fresh resolve for anything else (a fifo-fallback track, a track
-    // that isn't currently playing, or nothing cached yet).
-    $streamUrl = get_cached_stream_url($url) ?? resolve_direct_stream_url($url);
+    // Reuse whatever was last resolved for this exact track — either by
+    // attempt_direct_http_play at OwnTone-mode play time, or by an earlier
+    // call to this same route (Local mode's <audio> src and the disc-click
+    // both hit this route directly and never go through
+    // attempt_direct_http_play, so this route has to populate the cache
+    // itself too, or Local mode never benefits from it at all).
+    $streamUrl = get_cached_stream_url($url);
     if ($streamUrl === null) {
-        http_response_code(502);
-        echo 'could not resolve a direct stream url';
-        return;
+        $streamUrl = resolve_direct_stream_url($url);
+        if ($streamUrl === null) {
+            http_response_code(502);
+            echo 'could not resolve a direct stream url';
+            return;
+        }
+        cache_resolved_stream_url($url, $streamUrl);
     }
 
     header('Location: ' . $streamUrl, true, 302);
