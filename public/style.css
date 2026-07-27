@@ -1095,6 +1095,14 @@ body {
   padding: 16px;
 }
 
+/* This ID selector's own display:flex above outranks the browser's default
+   [hidden] { display: none } (an ID selector beats an attribute one) — same
+   bug as stream-btn/volume-row earlier, confirmed live: the modal showed
+   immediately on page load and never actually hid. */
+#quality-modal-overlay[hidden] {
+  display: none;
+}
+
 #quality-modal {
   width: 100%;
   max-width: 360px;
