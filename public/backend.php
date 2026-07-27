@@ -836,21 +836,24 @@ function handle_resolve_url(string $url): void
 // async time (the fetch) has passed — a plain synchronous window.open() of
 // a real URL, whose resolution happens server-side before the redirect,
 // doesn't hit that heuristic at all.
-function handle_stream_redirect(string $url): void
+function handle_stream_redirect(string $url, string $mode): void
 {
     if (!is_youtube_url($url)) {
         http_response_code(400);
         echo 'not a valid YouTube URL';
         return;
     }
+    if ($mode !== 'owntone' && $mode !== 'local') {
+        $mode = 'local';
+    }
 
-    // Reuse whatever was last resolved for this exact track — either by
-    // attempt_direct_http_play at OwnTone-mode play time, or by an earlier
-    // call to this same route (Local mode's <audio> src and the disc-click
-    // both hit this route directly and never go through
+    // Reuse whatever was last resolved for this exact (mode, video) pair —
+    // either by attempt_direct_http_play at OwnTone-mode play time, or by
+    // an earlier call to this same route (Local mode's <audio> src and the
+    // disc-click both hit this route directly and never go through
     // attempt_direct_http_play, so this route has to populate the cache
     // itself too, or Local mode never benefits from it at all).
-    $streamUrl = get_cached_stream_url($url);
+    $streamUrl = get_cached_stream_url($mode, $url);
     if ($streamUrl === null) {
         $streamUrl = resolve_direct_stream_url($url);
         if ($streamUrl === null) {
@@ -858,7 +861,7 @@ function handle_stream_redirect(string $url): void
             echo 'could not resolve a direct stream url';
             return;
         }
-        cache_resolved_stream_url($url, $streamUrl);
+        cache_resolved_stream_url($mode, $url, $streamUrl);
     }
 
     header('Location: ' . $streamUrl, true, 302);
@@ -1117,13 +1120,29 @@ function resolve_direct_stream_url(string $youtubeUrl): ?string
     return preg_match('#^https?://#i', $firstLine) ? $firstLine : null;
 }
 
-function cache_resolved_stream_url(string $youtubeUrl, string $streamUrl, string $path = RESOLVED_STREAM_CACHE_FILE): void
+// Pure: the cache is keyed per playback mode AND per video — OwnTone mode
+// and Local mode each resolve/play independently (switching modes
+// mid-session shouldn't evict or collide with the other's entry), and
+// obviously different videos need their own entries too, not just the
+// single last-resolved one.
+function stream_cache_key(string $mode, string $youtubeUrl): string
 {
+    return $mode . '|' . $youtubeUrl;
+}
+
+function cache_resolved_stream_url(string $mode, string $youtubeUrl, string $streamUrl, string $path = RESOLVED_STREAM_CACHE_FILE): void
+{
+    $cache = read_json_file($path);
+    if (!is_array($cache)) {
+        $cache = [];
+    }
+    $cache[stream_cache_key($mode, $youtubeUrl)] = $streamUrl;
+
     $dir = dirname($path);
     if (!is_dir($dir)) {
         mkdir($dir, 0755, true);
     }
-    file_put_contents($path, json_encode(['youtube_url' => $youtubeUrl, 'stream_url' => $streamUrl]));
+    file_put_contents($path, json_encode($cache));
 }
 
 // Pure: does this resolved CDN url's own expire= timestamp mean it's no
@@ -1144,19 +1163,17 @@ function is_stream_url_expired(string $streamUrl, int $nowUnixSeconds, int $buff
     return ((int) $params['expire'] - $bufferSeconds) <= $nowUnixSeconds;
 }
 
-// Only returns a hit for the exact url last resolved, and only while its
-// own expire= timestamp is still good — anything else (a different track,
-// nothing cached yet, or an expired resolve) is a miss, letting the caller
-// fall back to a fresh resolve. Matters especially for a Local-mode resume
-// long after the original resolve (a reload hours later, say), where the
-// cached url may genuinely no longer work.
-function get_cached_stream_url(string $youtubeUrl, string $path = RESOLVED_STREAM_CACHE_FILE): ?string
+// Only returns a hit for this exact (mode, video) pair, and only while its
+// own expire= timestamp is still good — anything else (a different video,
+// the other mode's entry, nothing cached yet, or an expired resolve) is a
+// miss, letting the caller fall back to a fresh resolve. The expiry check
+// matters especially for a Local-mode resume long after the original
+// resolve (a reload hours later, say), where the cached url may genuinely
+// no longer work.
+function get_cached_stream_url(string $mode, string $youtubeUrl, string $path = RESOLVED_STREAM_CACHE_FILE): ?string
 {
-    $cached = read_json_file($path);
-    if (($cached['youtube_url'] ?? null) !== $youtubeUrl) {
-        return null;
-    }
-    $streamUrl = $cached['stream_url'] ?? null;
+    $cache = read_json_file($path);
+    $streamUrl = $cache[stream_cache_key($mode, $youtubeUrl)] ?? null;
     if (!is_string($streamUrl) || is_stream_url_expired($streamUrl, time())) {
         return null;
     }
@@ -1232,7 +1249,7 @@ function attempt_direct_http_play(string $youtubeUrl, string $title, string $cha
     // Same cache-first policy as handle_stream_redirect: every resolved url
     // gets cached, and only actually re-resolved once its own expire=
     // timestamp says it's no longer good — not on every play.
-    $streamUrl = get_cached_stream_url($youtubeUrl);
+    $streamUrl = get_cached_stream_url('owntone', $youtubeUrl);
     if ($streamUrl === null) {
         $streamUrl = resolve_direct_stream_url($youtubeUrl);
         if ($streamUrl === null) {
@@ -1264,7 +1281,7 @@ function attempt_direct_http_play(string $youtubeUrl, string $title, string $cha
         return null;
     }
 
-    cache_resolved_stream_url($youtubeUrl, $streamUrl);
+    cache_resolved_stream_url('owntone', $youtubeUrl, $streamUrl);
 
     // OwnTone has no tags to scan from a bare CDN url, so metadata (title
     // shown in its UI/AirPlay clients) has to be set explicitly here —
@@ -1666,7 +1683,7 @@ if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
     // targets), not JSON POST actions like everything else below.
     $getAction = $_GET['action'] ?? '';
     if ($getAction === 'stream_redirect') {
-        handle_stream_redirect((string) ($_GET['url'] ?? ''));
+        handle_stream_redirect((string) ($_GET['url'] ?? ''), (string) ($_GET['mode'] ?? ''));
         return;
     }
     if ($getAction === 'owntone_artwork') {

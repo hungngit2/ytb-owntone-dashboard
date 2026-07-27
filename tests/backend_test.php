@@ -338,21 +338,34 @@ assert_true(is_stream_url_expired('https://cdn.example/aaa.m4a?expire=notanumber
 
 $tmpStreamCacheFile = sys_get_temp_dir() . '/backend_test_stream_cache_' . uniqid() . '.json';
 assert_true(
-    get_cached_stream_url('https://youtu.be/aaa', $tmpStreamCacheFile) === null,
+    get_cached_stream_url('owntone', 'https://youtu.be/aaa', $tmpStreamCacheFile) === null,
     'get_cached_stream_url is a miss when nothing has been cached yet'
 );
-cache_resolved_stream_url('https://youtu.be/aaa', $futureExpireUrl, $tmpStreamCacheFile);
+cache_resolved_stream_url('owntone', 'https://youtu.be/aaa', $futureExpireUrl, $tmpStreamCacheFile);
 assert_true(
-    get_cached_stream_url('https://youtu.be/aaa', $tmpStreamCacheFile) === $futureExpireUrl,
-    'get_cached_stream_url hits for the exact url just cached, while still unexpired'
+    get_cached_stream_url('owntone', 'https://youtu.be/aaa', $tmpStreamCacheFile) === $futureExpireUrl,
+    'get_cached_stream_url hits for the exact (mode, video) pair just cached, while still unexpired'
 );
 assert_true(
-    get_cached_stream_url('https://youtu.be/bbb', $tmpStreamCacheFile) === null,
-    'get_cached_stream_url is a miss for a different url than the one cached'
+    get_cached_stream_url('owntone', 'https://youtu.be/bbb', $tmpStreamCacheFile) === null,
+    'get_cached_stream_url is a miss for a different video than the one cached'
 );
-cache_resolved_stream_url('https://youtu.be/aaa', $pastExpireUrl, $tmpStreamCacheFile);
 assert_true(
-    get_cached_stream_url('https://youtu.be/aaa', $tmpStreamCacheFile) === null,
+    get_cached_stream_url('local', 'https://youtu.be/aaa', $tmpStreamCacheFile) === null,
+    'get_cached_stream_url is a miss for the other mode, even for the same video — modes do not share a cache slot'
+);
+cache_resolved_stream_url('local', 'https://youtu.be/aaa', $futureExpireUrl, $tmpStreamCacheFile);
+assert_true(
+    get_cached_stream_url('local', 'https://youtu.be/aaa', $tmpStreamCacheFile) === $futureExpireUrl,
+    'local mode gets its own cache entry for the same video, independent of the owntone-mode one'
+);
+assert_true(
+    get_cached_stream_url('owntone', 'https://youtu.be/aaa', $tmpStreamCacheFile) === $futureExpireUrl,
+    'caching the local-mode entry did not clobber the earlier owntone-mode entry for the same video'
+);
+cache_resolved_stream_url('owntone', 'https://youtu.be/aaa', $pastExpireUrl, $tmpStreamCacheFile);
+assert_true(
+    get_cached_stream_url('owntone', 'https://youtu.be/aaa', $tmpStreamCacheFile) === null,
     'get_cached_stream_url is a miss once the cached url has actually expired'
 );
 unlink($tmpStreamCacheFile);

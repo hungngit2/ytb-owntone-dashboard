@@ -1261,7 +1261,7 @@ async function playLocalQueueItem(items, index, triggerBtn) {
     localQueue = { items, current_index: index, progress_seconds: 0 };
     saveLocalQueue();
 
-    audio.src = `backend.php?action=stream_redirect&url=${encodeURIComponent(item.webpage_url)}`;
+    audio.src = `backend.php?action=stream_redirect&mode=local&url=${encodeURIComponent(item.webpage_url)}`;
     audio.volume = Number(document.getElementById('volume-slider').value) / 100;
     // stream-btn's "Listen in browser" feature shares this same <audio>
     // element and can leave .muted stuck true — volume changes have no
@@ -1905,7 +1905,7 @@ if (typeof document !== 'undefined') {
   document.getElementById('disc').addEventListener('click', () => {
     const webpageUrl = currentWebpageUrl();
     if (webpageUrl) {
-      window.open(`backend.php?action=stream_redirect&url=${encodeURIComponent(webpageUrl)}`, '_blank');
+      window.open(`backend.php?action=stream_redirect&mode=${playMode}&url=${encodeURIComponent(webpageUrl)}`, '_blank');
     }
   });
 
@@ -1979,7 +1979,7 @@ function resumeLocalPlaybackFromStorage() {
   };
 
   const audio = document.getElementById('browser-stream-audio');
-  audio.src = `backend.php?action=stream_redirect&url=${encodeURIComponent(item.webpage_url)}`;
+  audio.src = `backend.php?action=stream_redirect&mode=local&url=${encodeURIComponent(item.webpage_url)}`;
   audio.volume = Number(document.getElementById('volume-slider').value) / 100;
   audio.muted = false;
 
