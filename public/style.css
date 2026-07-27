@@ -824,6 +824,27 @@ body {
   border-radius: 10px;
   padding: 8px;
   background: rgba(20, 22, 42, 0.4);
+  /* Thin translucent overlay thumb, no visible track — matches iOS's
+     scrollbar style instead of the default wide opaque desktop one. */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.5) transparent;
+}
+
+#results-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+#results-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+#results-list::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.5);
+  border-radius: 999px;
+}
+
+#results-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.75);
 }
 
 .result-row {
