@@ -73,8 +73,11 @@ assert_true(extract_youtube_video_id('not a youtube url') === null, 'returns nul
 assert_true(audio_cache_path('https://youtu.be/dQw4w9WgXcQ', '/tmp/cache') === '/tmp/cache/dQw4w9WgXcQ.audio', 'audio_cache_path builds a path keyed by video id');
 assert_true(audio_cache_path('not a url', '/tmp/cache') === null, 'audio_cache_path returns null when no video id can be extracted');
 
-$resolveCmd = build_resolve_direct_stream_url_cmd('https://youtu.be/dQw4w9WgXcQ');
-assert_true(str_contains($resolveCmd, YTDLP_BIN . ' --no-playlist -f "bestaudio[ext=m4a]/bestaudio" -g'), 'resolve cmd asks yt-dlp for the direct url via -g, preferring a seekable m4a rendition');
+$resolveCmd = build_resolve_direct_stream_urls_cmd('https://youtu.be/dQw4w9WgXcQ');
+assert_true(
+    str_contains($resolveCmd, YTDLP_BIN . ' --no-playlist -f "bestaudio[ext=m4a]/bestaudio,best[ext=mp4]/best" -g'),
+    'resolve cmd asks yt-dlp for both direct audio and video urls via -g in one call, audio preferring a seekable m4a rendition'
+);
 assert_true(str_starts_with($resolveCmd, TIMEOUT_BIN), 'resolve cmd is guarded by an absolute-path timeout');
 assert_true(str_contains($resolveCmd, "'https://youtu.be/dQw4w9WgXcQ'"), 'resolve cmd embeds the target url');
 
@@ -347,21 +350,41 @@ assert_true(
 assert_true(is_stream_url_expired('https://cdn.example/aaa.m4a', 0, $now), 'a url with no expire param at all is treated as expired');
 assert_true(is_stream_url_expired('https://cdn.example/aaa.m4a?expire=notanumber', 0, $now), 'a non-numeric expire value is treated as expired');
 
+$futureExpireVideoUrl = 'https://cdn.example/aaa.mp4?expire=' . ($now + 3600) . '&dur=19.063';
+
 $tmpStreamCacheFile = sys_get_temp_dir() . '/backend_test_stream_cache_' . uniqid() . '.json';
 assert_true(
     get_cached_stream_url('https://youtu.be/aaa', $tmpStreamCacheFile) === null,
     'get_cached_stream_url is a miss when nothing has been cached yet'
 );
-cache_resolved_stream_url('https://youtu.be/aaa', $futureExpireUrl, $tmpStreamCacheFile);
+assert_true(
+    get_cached_video_stream_url('https://youtu.be/aaa', $tmpStreamCacheFile) === null,
+    'get_cached_video_stream_url is a miss when nothing has been cached yet'
+);
+
+cache_resolved_stream_urls('https://youtu.be/aaa', $futureExpireUrl, $futureExpireVideoUrl, $tmpStreamCacheFile);
 assert_true(
     get_cached_stream_url('https://youtu.be/aaa', $tmpStreamCacheFile) === $futureExpireUrl,
     'get_cached_stream_url hits for the exact video just cached, while still unexpired — regardless of which UI path asks'
 );
 assert_true(
+    get_cached_video_stream_url('https://youtu.be/aaa', $tmpStreamCacheFile) === $futureExpireVideoUrl,
+    'get_cached_video_stream_url hits too — audio and video are cached together in one call'
+);
+assert_true(
     get_cached_stream_url('https://youtu.be/bbb', $tmpStreamCacheFile) === null,
     'get_cached_stream_url is a miss for a different video than the one cached'
 );
-cache_resolved_stream_url('https://youtu.be/aaa', $pastExpireUrl, $tmpStreamCacheFile);
+
+// A resolve where video wasn't available (null) must not clobber the
+// video entry that was already cached for this same video url.
+cache_resolved_stream_urls('https://youtu.be/aaa', $futureExpireUrl, null, $tmpStreamCacheFile);
+assert_true(
+    get_cached_video_stream_url('https://youtu.be/aaa', $tmpStreamCacheFile) === $futureExpireVideoUrl,
+    'caching audio alone (video resolve returned null) does not clobber the existing video cache entry'
+);
+
+cache_resolved_stream_urls('https://youtu.be/aaa', $pastExpireUrl, null, $tmpStreamCacheFile);
 assert_true(
     get_cached_stream_url('https://youtu.be/aaa', $tmpStreamCacheFile) === null,
     'get_cached_stream_url is a miss once the cached url has actually expired'

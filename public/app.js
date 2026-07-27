@@ -1904,10 +1904,15 @@ if (typeof document !== 'undefined') {
     return currentTrackInfo.webpageUrl || (queueItem && queueItem.webpage_url) || null;
   }
 
+  // Opens the raw CDN video (progressive, video+audio muxed) stream url —
+  // same backend.php?action=stream_redirect route the disc thumbnail uses
+  // for the audio stream (see its own comment below for why this needs to
+  // be a real GET target rather than a fetch()-then-open()), just with
+  // video=1 so it serves the video entry from the cache instead.
   document.getElementById('now-title-text').addEventListener('click', () => {
     const webpageUrl = currentWebpageUrl();
     if (webpageUrl) {
-      window.open(webpageUrl, '_blank', 'noopener');
+      window.open(`backend.php?action=stream_redirect&video=1&url=${encodeURIComponent(webpageUrl)}`, '_blank');
     }
   });
 

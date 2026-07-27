@@ -836,7 +836,7 @@ function handle_resolve_url(string $url): void
 // async time (the fetch) has passed — a plain synchronous window.open() of
 // a real URL, whose resolution happens server-side before the redirect,
 // doesn't hit that heuristic at all.
-function handle_stream_redirect(string $url): void
+function handle_stream_redirect(string $url, bool $wantVideo = false): void
 {
     if (!is_youtube_url($url)) {
         http_response_code(400);
@@ -846,19 +846,23 @@ function handle_stream_redirect(string $url): void
 
     // Reuse whatever was last resolved for this exact video — either by
     // attempt_direct_http_play at OwnTone-mode play time, or by an earlier
-    // call to this same route (Local mode's <audio> src and the disc-click
-    // both hit this route directly and never go through
+    // call to this same route (Local mode's <audio> src and the disc/title
+    // click all hit this route directly and never go through
     // attempt_direct_http_play, so this route has to populate the cache
     // itself too, or Local mode never benefits from it at all).
-    $streamUrl = get_cached_stream_url($url);
+    $streamUrl = $wantVideo ? get_cached_video_stream_url($url) : get_cached_stream_url($url);
     if ($streamUrl === null) {
-        $streamUrl = resolve_direct_stream_url($url);
+        // Audio and video are always resolved (and cached) together in one
+        // yt-dlp call, regardless of which one was actually asked for —
+        // whichever gets clicked next is then already cached too.
+        $resolved = resolve_direct_stream_urls($url);
+        cache_resolved_stream_urls($url, $resolved['audio'], $resolved['video']);
+        $streamUrl = $wantVideo ? $resolved['video'] : $resolved['audio'];
         if ($streamUrl === null) {
             http_response_code(502);
             echo 'could not resolve a direct stream url';
             return;
         }
-        cache_resolved_stream_url($url, $streamUrl);
     }
 
     header('Location: ' . $streamUrl, true, 302);
@@ -1090,9 +1094,9 @@ function stop_existing_pipeline(): void
     shell_exec('pkill -9 -f ' . escapeshellarg(OUR_FFMPEG_PATTERN) . ' 2>/dev/null');
 }
 
-// Resolves a video straight to its underlying CDN audio URL — no download,
-// just format-selection metadata. See resolve_direct_stream_url for why this
-// is tried before falling back to the fifo pipeline at all.
+// Resolves a video straight to its underlying CDN audio/video URLs — no
+// download, just format-selection metadata. See resolve_direct_stream_urls
+// for why this is tried before falling back to the fifo pipeline at all.
 //
 // Prefers m4a over the plain "bestaudio" selector (usually opus-in-webm):
 // confirmed live that OwnTone/ffmpeg can't seek an opus/webm stream over
@@ -1100,21 +1104,46 @@ function stop_existing_pipeline(): void
 // while an m4a/mp4 stream seeks correctly — mp4's moov atom index makes it
 // randomly seekable in a way a live opus/webm stream isn't. Falls back to
 // bestaudio for the rare video with no m4a rendition.
-function build_resolve_direct_stream_url_cmd(string $youtubeUrl): string
+// Resolves BOTH the audio-only and progressive video+audio CDN urls in one
+// yt-dlp invocation — comma-separated format selectors make yt-dlp -g print
+// one url per line, in selector order, which is half the yt-dlp round-trips
+// (~10s each) of resolving them separately.
+//
+// Audio selector prefers m4a over the plain "bestaudio" selector (usually
+// opus-in-webm): confirmed live that OwnTone/ffmpeg can't seek an opus/webm
+// stream over HTTP (player_playback_seek succeeds but progress never
+// actually moves), while an m4a/mp4 stream seeks correctly — mp4's moov
+// atom index makes it randomly seekable in a way a live opus/webm stream
+// isn't. Video selector prefers a single progressive mp4 (video+audio
+// muxed together) since -g needs one directly fetchable url — an
+// adaptive-only "bestvideo" selection has no audio track of its own.
+function build_resolve_direct_stream_urls_cmd(string $youtubeUrl): string
 {
     return sprintf(
-        '%s 15 %s --no-playlist -f "bestaudio[ext=m4a]/bestaudio" -g %s 2>/dev/null',
+        '%s 20 %s --no-playlist -f "bestaudio[ext=m4a]/bestaudio,best[ext=mp4]/best" -g %s 2>/dev/null',
         TIMEOUT_BIN,
         YTDLP_BIN,
         escapeshellarg($youtubeUrl)
     );
 }
 
-function resolve_direct_stream_url(string $youtubeUrl): ?string
+// Returns ['audio' => ?string, 'video' => ?string] — either can be null if
+// yt-dlp didn't resolve that format (e.g. some videos have no progressive
+// mp4 rendition at all).
+function resolve_direct_stream_urls(string $youtubeUrl): array
 {
-    $out = trim((string) shell_exec(build_resolve_direct_stream_url_cmd($youtubeUrl)));
-    $firstLine = trim(strtok($out, "\n") ?: '');
-    return preg_match('#^https?://#i', $firstLine) ? $firstLine : null;
+    $out = trim((string) shell_exec(build_resolve_direct_stream_urls_cmd($youtubeUrl)));
+    $lines = array_values(array_filter(
+        array_map('trim', explode("\n", $out)),
+        function ($line) {
+            return preg_match('#^https?://#i', $line);
+        }
+    ));
+
+    return [
+        'audio' => $lines[0] ?? null,
+        'video' => $lines[1] ?? null,
+    ];
 }
 
 // Pure: the CDN url itself embeds the media's own duration (dur=, seconds,
@@ -1131,20 +1160,29 @@ function extract_stream_url_duration_seconds(string $streamUrl): float
     return isset($params['dur']) && is_numeric($params['dur']) ? (float) $params['dur'] : 0.0;
 }
 
-// server-side cache, keyed by video url only — the resolved CDN url is the
-// same regardless of which UI path (OwnTone-mode play, Local-mode <audio>,
-// the disc-click) asked for it, so there's no reason to keep separate
-// copies per mode.
-function cache_resolved_stream_url(string $youtubeUrl, string $streamUrl, string $path = RESOLVED_STREAM_CACHE_FILE): void
+// server-side cache, keyed by video url only — the resolved CDN urls are
+// the same regardless of which UI path (OwnTone-mode play, Local-mode
+// <audio>, the disc/title click) asked for them, so there's no reason to
+// keep separate copies per mode. Audio and video share one entry per video
+// (each resolved together, see resolve_direct_stream_urls) but are cached/
+// expired independently, since either can be null/missing for a given
+// video and that shouldn't invalidate the other.
+function cache_resolved_stream_urls(string $youtubeUrl, ?string $audioStreamUrl, ?string $videoStreamUrl, string $path = RESOLVED_STREAM_CACHE_FILE): void
 {
     $cache = read_json_file($path);
     if (!is_array($cache)) {
         $cache = [];
     }
-    $cache[$youtubeUrl] = [
-        'stream_url' => $streamUrl,
-        'duration_seconds' => extract_stream_url_duration_seconds($streamUrl),
-    ];
+    $entry = is_array($cache[$youtubeUrl] ?? null) ? $cache[$youtubeUrl] : [];
+    if ($audioStreamUrl !== null) {
+        $entry['stream_url'] = $audioStreamUrl;
+        $entry['duration_seconds'] = extract_stream_url_duration_seconds($audioStreamUrl);
+    }
+    if ($videoStreamUrl !== null) {
+        $entry['video_stream_url'] = $videoStreamUrl;
+        $entry['video_duration_seconds'] = extract_stream_url_duration_seconds($videoStreamUrl);
+    }
+    $cache[$youtubeUrl] = $entry;
 
     $dir = dirname($path);
     if (!is_dir($dir)) {
@@ -1193,6 +1231,20 @@ function get_cached_stream_url(string $youtubeUrl, string $path = RESOLVED_STREA
         return null;
     }
     return $entry['stream_url'];
+}
+
+function get_cached_video_stream_url(string $youtubeUrl, string $path = RESOLVED_STREAM_CACHE_FILE): ?string
+{
+    $cache = read_json_file($path);
+    $entry = $cache[$youtubeUrl] ?? null;
+    if (!is_array($entry) || !is_string($entry['video_stream_url'] ?? null)) {
+        return null;
+    }
+    $durationSeconds = (float) ($entry['video_duration_seconds'] ?? 0);
+    if (is_stream_url_expired($entry['video_stream_url'], $durationSeconds, time())) {
+        return null;
+    }
+    return $entry['video_stream_url'];
 }
 
 // The browser never talks to OwnTone directly — it only ever calls
@@ -1263,10 +1315,15 @@ function attempt_direct_http_play(string $youtubeUrl, string $title, string $cha
 {
     // Same cache-first policy as handle_stream_redirect: every resolved url
     // gets cached, and only actually re-resolved once its own expire=
-    // timestamp says it's no longer good — not on every play.
+    // timestamp says it's no longer good — not on every play. Audio and
+    // video are resolved together in one yt-dlp call either way, so a
+    // later click on the video-stream link is already cached too.
     $streamUrl = get_cached_stream_url($youtubeUrl);
+    $videoStreamUrl = null;
     if ($streamUrl === null) {
-        $streamUrl = resolve_direct_stream_url($youtubeUrl);
+        $resolved = resolve_direct_stream_urls($youtubeUrl);
+        $streamUrl = $resolved['audio'];
+        $videoStreamUrl = $resolved['video'];
         if ($streamUrl === null) {
             return null;
         }
@@ -1296,7 +1353,7 @@ function attempt_direct_http_play(string $youtubeUrl, string $title, string $cha
         return null;
     }
 
-    cache_resolved_stream_url($youtubeUrl, $streamUrl);
+    cache_resolved_stream_urls($youtubeUrl, $streamUrl, $videoStreamUrl);
 
     // OwnTone has no tags to scan from a bare CDN url, so metadata (title
     // shown in its UI/AirPlay clients) has to be set explicitly here —
@@ -1698,7 +1755,7 @@ if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
     // targets), not JSON POST actions like everything else below.
     $getAction = $_GET['action'] ?? '';
     if ($getAction === 'stream_redirect') {
-        handle_stream_redirect((string) ($_GET['url'] ?? ''));
+        handle_stream_redirect((string) ($_GET['url'] ?? ''), ($_GET['video'] ?? '') === '1');
         return;
     }
     if ($getAction === 'owntone_artwork') {
