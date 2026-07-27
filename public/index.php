@@ -107,6 +107,16 @@ enforce_dashboard_auth();
     <div id="results-container">
       <div id="results-list"></div>
     </div>
+
+    <div id="quality-modal-overlay" hidden>
+      <div id="quality-modal">
+        <div id="quality-modal-header">
+          <span>Open direct stream</span>
+          <button type="button" id="quality-modal-close" aria-label="Close">&times;</button>
+        </div>
+        <div id="quality-modal-body"></div>
+      </div>
+    </div>
   </main>
 
   <script src="config.js"></script>

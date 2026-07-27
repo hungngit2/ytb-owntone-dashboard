@@ -73,11 +73,8 @@ assert_true(extract_youtube_video_id('not a youtube url') === null, 'returns nul
 assert_true(audio_cache_path('https://youtu.be/dQw4w9WgXcQ', '/tmp/cache') === '/tmp/cache/dQw4w9WgXcQ.audio', 'audio_cache_path builds a path keyed by video id');
 assert_true(audio_cache_path('not a url', '/tmp/cache') === null, 'audio_cache_path returns null when no video id can be extracted');
 
-$resolveCmd = build_resolve_direct_stream_urls_cmd('https://youtu.be/dQw4w9WgXcQ');
-assert_true(
-    str_contains($resolveCmd, YTDLP_BIN . ' --no-playlist -f "bestaudio[ext=m4a]/bestaudio,best[ext=mp4]/best" -g'),
-    'resolve cmd asks yt-dlp for both direct audio and video urls via -g in one call, audio preferring a seekable m4a rendition'
-);
+$resolveCmd = build_resolve_all_formats_cmd('https://youtu.be/dQw4w9WgXcQ');
+assert_true(str_contains($resolveCmd, YTDLP_BIN . ' --no-playlist -j'), 'resolve cmd dumps every format\'s metadata (including urls) via -j in one call');
 assert_true(str_starts_with($resolveCmd, TIMEOUT_BIN), 'resolve cmd is guarded by an absolute-path timeout');
 assert_true(str_contains($resolveCmd, "'https://youtu.be/dQw4w9WgXcQ'"), 'resolve cmd embeds the target url');
 
@@ -350,7 +347,35 @@ assert_true(
 assert_true(is_stream_url_expired('https://cdn.example/aaa.m4a', 0, $now), 'a url with no expire param at all is treated as expired');
 assert_true(is_stream_url_expired('https://cdn.example/aaa.m4a?expire=notanumber', 0, $now), 'a non-numeric expire value is treated as expired');
 
+// parse_stream_variants_from_formats — pure selection logic against a
+// synthetic yt-dlp -j "formats" array (shaped like real output: audio-only,
+// video-only/adaptive, and progressive entries mixed together).
+$syntheticFormats = [
+    ['url' => 'https://cdn.example/audio-opus.webm', 'ext' => 'webm', 'vcodec' => 'none', 'acodec' => 'opus', 'abr' => 130],
+    ['url' => 'https://cdn.example/audio-low.m4a', 'ext' => 'm4a', 'vcodec' => 'none', 'acodec' => 'mp4a.40.5', 'abr' => 49],
+    ['url' => 'https://cdn.example/audio-high.m4a', 'ext' => 'm4a', 'vcodec' => 'none', 'acodec' => 'mp4a.40.2', 'abr' => 129],
+    ['url' => 'https://cdn.example/video-only-1080p.mp4', 'ext' => 'mp4', 'vcodec' => 'avc1', 'acodec' => 'none', 'height' => 1080, 'tbr' => 2000],
+    ['url' => 'https://cdn.example/progressive-240p-low.mp4', 'ext' => 'mp4', 'vcodec' => 'avc1', 'acodec' => 'mp4a.40.2', 'height' => 240, 'tbr' => 200],
+    ['url' => 'https://cdn.example/progressive-240p-high.mp4', 'ext' => 'mp4', 'vcodec' => 'avc1', 'acodec' => 'mp4a.40.2', 'height' => 240, 'tbr' => 266],
+    ['url' => 'https://cdn.example/progressive-360p.mp4', 'ext' => 'mp4', 'vcodec' => 'avc1', 'acodec' => 'mp4a.40.2', 'height' => 360, 'tbr' => 400],
+    ['not an array'],
+    ['url' => null, 'vcodec' => 'none', 'acodec' => 'aac'],
+];
+$parsed = parse_stream_variants_from_formats($syntheticFormats);
+assert_true($parsed['audio'] === 'https://cdn.example/audio-high.m4a', 'prefers m4a audio over a higher-bitrate non-m4a option (seekability over bitrate)');
+assert_true(count($parsed['progressive']) === 2, 'only progressive (video+audio muxed) formats are returned, not the video-only adaptive one');
+assert_true($parsed['progressive'][0] === ['height' => 360, 'url' => 'https://cdn.example/progressive-360p.mp4'], 'progressive results are sorted highest resolution first');
+assert_true(
+    $parsed['progressive'][1] === ['height' => 240, 'url' => 'https://cdn.example/progressive-240p-high.mp4'],
+    'multiple formats at the same height are deduped to the highest-bitrate one'
+);
+
+$audioOnlyFormats = [['url' => 'https://cdn.example/only-audio.m4a', 'ext' => 'm4a', 'vcodec' => 'none', 'acodec' => 'mp4a.40.2', 'abr' => 129]];
+assert_true(parse_stream_variants_from_formats($audioOnlyFormats)['progressive'] === [], 'progressive is empty when no format has both video and audio (matches a real low-res video: only itag 18 at 240p was progressive)');
+assert_true(parse_stream_variants_from_formats([])['audio'] === null, 'audio is null when there are no formats at all');
+
 $futureExpireVideoUrl = 'https://cdn.example/aaa.mp4?expire=' . ($now + 3600) . '&dur=19.063';
+$pastExpireVideoUrl = 'https://cdn.example/aaa-360p.mp4?expire=' . ($now - 3600) . '&dur=19.063';
 
 $tmpStreamCacheFile = sys_get_temp_dir() . '/backend_test_stream_cache_' . uniqid() . '.json';
 assert_true(
@@ -358,33 +383,50 @@ assert_true(
     'get_cached_stream_url is a miss when nothing has been cached yet'
 );
 assert_true(
-    get_cached_video_stream_url('https://youtu.be/aaa', $tmpStreamCacheFile) === null,
-    'get_cached_video_stream_url is a miss when nothing has been cached yet'
+    get_cached_progressive_variants('https://youtu.be/aaa', $tmpStreamCacheFile) === [],
+    'get_cached_progressive_variants is empty when nothing has been cached yet'
 );
 
-cache_resolved_stream_urls('https://youtu.be/aaa', $futureExpireUrl, $futureExpireVideoUrl, $tmpStreamCacheFile);
+cache_resolved_stream_variants(
+    'https://youtu.be/aaa',
+    $futureExpireUrl,
+    [['height' => 240, 'url' => $pastExpireVideoUrl], ['height' => 360, 'url' => $futureExpireVideoUrl]],
+    $tmpStreamCacheFile
+);
 assert_true(
     get_cached_stream_url('https://youtu.be/aaa', $tmpStreamCacheFile) === $futureExpireUrl,
     'get_cached_stream_url hits for the exact video just cached, while still unexpired — regardless of which UI path asks'
 );
 assert_true(
-    get_cached_video_stream_url('https://youtu.be/aaa', $tmpStreamCacheFile) === $futureExpireVideoUrl,
-    'get_cached_video_stream_url hits too — audio and video are cached together in one call'
-);
-assert_true(
     get_cached_stream_url('https://youtu.be/bbb', $tmpStreamCacheFile) === null,
     'get_cached_stream_url is a miss for a different video than the one cached'
 );
-
-// A resolve where video wasn't available (null) must not clobber the
-// video entry that was already cached for this same video url.
-cache_resolved_stream_urls('https://youtu.be/aaa', $futureExpireUrl, null, $tmpStreamCacheFile);
 assert_true(
-    get_cached_video_stream_url('https://youtu.be/aaa', $tmpStreamCacheFile) === $futureExpireVideoUrl,
-    'caching audio alone (video resolve returned null) does not clobber the existing video cache entry'
+    get_cached_progressive_url_for_height('https://youtu.be/aaa', 360, $tmpStreamCacheFile) === $futureExpireVideoUrl,
+    'get_cached_progressive_url_for_height hits for a cached, unexpired height'
+);
+assert_true(
+    get_cached_progressive_url_for_height('https://youtu.be/aaa', 240, $tmpStreamCacheFile) === null,
+    'get_cached_progressive_url_for_height is a miss for a cached but expired height'
+);
+assert_true(
+    get_cached_progressive_url_for_height('https://youtu.be/aaa', 1080, $tmpStreamCacheFile) === null,
+    'get_cached_progressive_url_for_height is a miss for a height that was never cached at all'
+);
+assert_true(
+    get_cached_progressive_variants('https://youtu.be/aaa', $tmpStreamCacheFile) === [['height' => 360, 'url' => $futureExpireVideoUrl, 'duration_seconds' => 19.063]],
+    'get_cached_progressive_variants only returns the still-valid entries, sorted highest first'
 );
 
-cache_resolved_stream_urls('https://youtu.be/aaa', $pastExpireUrl, null, $tmpStreamCacheFile);
+// A resolve where video wasn't available (empty array) must not clobber
+// the progressive entries already cached for this same video url.
+cache_resolved_stream_variants('https://youtu.be/aaa', $futureExpireUrl, [], $tmpStreamCacheFile);
+assert_true(
+    get_cached_progressive_url_for_height('https://youtu.be/aaa', 360, $tmpStreamCacheFile) === $futureExpireVideoUrl,
+    'caching audio alone (empty progressive array) does not clobber the existing progressive cache entries'
+);
+
+cache_resolved_stream_variants('https://youtu.be/aaa', $pastExpireUrl, [], $tmpStreamCacheFile);
 assert_true(
     get_cached_stream_url('https://youtu.be/aaa', $tmpStreamCacheFile) === null,
     'get_cached_stream_url is a miss once the cached url has actually expired'

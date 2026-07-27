@@ -1904,15 +1904,10 @@ if (typeof document !== 'undefined') {
     return currentTrackInfo.webpageUrl || (queueItem && queueItem.webpage_url) || null;
   }
 
-  // Opens the raw CDN video (progressive, video+audio muxed) stream url —
-  // same backend.php?action=stream_redirect route the disc thumbnail uses
-  // for the audio stream (see its own comment below for why this needs to
-  // be a real GET target rather than a fetch()-then-open()), just with
-  // video=1 so it serves the video entry from the cache instead.
   document.getElementById('now-title-text').addEventListener('click', () => {
     const webpageUrl = currentWebpageUrl();
     if (webpageUrl) {
-      window.open(`backend.php?action=stream_redirect&video=1&url=${encodeURIComponent(webpageUrl)}`, '_blank');
+      window.open(webpageUrl, '_blank', 'noopener');
     }
   });
 
@@ -1935,6 +1930,77 @@ if (typeof document !== 'undefined') {
 
   document.getElementById('play-mode-toggle').addEventListener('click', () => {
     setPlayMode(isLocalMode() ? 'owntone' : 'local');
+  });
+
+  function closeQualityModal() {
+    document.getElementById('quality-modal-overlay').hidden = true;
+  }
+
+  function openStreamVariant(webpageUrl, height) {
+    const heightParam = height ? `&height=${height}` : '';
+    window.open(`backend.php?action=stream_redirect${heightParam}&url=${encodeURIComponent(webpageUrl)}`, '_blank');
+    closeQualityModal();
+  }
+
+  // Lists exactly the qualities backend.php actually resolved a working
+  // direct link for — never a resolution that only exists as a separate
+  // video-only/audio-only pair (see resolve_all_stream_variants: YouTube
+  // rarely offers progressive, single-url streams above ~720p).
+  async function openQualityModal() {
+    const webpageUrl = currentWebpageUrl();
+    if (!webpageUrl) {
+      return;
+    }
+
+    const body = document.getElementById('quality-modal-body');
+    body.innerHTML = '<div class="quality-modal-empty">Loading available qualities…</div>';
+    document.getElementById('quality-modal-overlay').hidden = false;
+
+    let qualities = [];
+    try {
+      const res = await fetch('backend.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `action=list_video_qualities&url=${encodeURIComponent(webpageUrl)}`,
+      });
+      const data = await res.json();
+      qualities = data.status === 'ok' && Array.isArray(data.qualities) ? data.qualities : [];
+    } catch (err) {
+      // Falls through to the empty-state below.
+    }
+
+    body.innerHTML = '';
+    const audioBtn = document.createElement('button');
+    audioBtn.type = 'button';
+    audioBtn.className = 'quality-modal-option';
+    audioBtn.textContent = 'Audio only';
+    audioBtn.addEventListener('click', () => openStreamVariant(webpageUrl, 0));
+    body.appendChild(audioBtn);
+
+    if (qualities.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'quality-modal-empty';
+      empty.textContent = 'No direct video link available for this track (only its audio-only rendition resolved).';
+      body.appendChild(empty);
+      return;
+    }
+
+    qualities.forEach((quality) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'quality-modal-option';
+      btn.textContent = `Video — ${quality.label}`;
+      btn.addEventListener('click', () => openStreamVariant(webpageUrl, quality.height));
+      body.appendChild(btn);
+    });
+  }
+
+  document.getElementById('status-badge').addEventListener('click', openQualityModal);
+  document.getElementById('quality-modal-close').addEventListener('click', closeQualityModal);
+  document.getElementById('quality-modal-overlay').addEventListener('click', (event) => {
+    if (event.target.id === 'quality-modal-overlay') {
+      closeQualityModal();
+    }
   });
 
   const localAudio = document.getElementById('browser-stream-audio');

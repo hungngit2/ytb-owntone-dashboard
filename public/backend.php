@@ -836,7 +836,10 @@ function handle_resolve_url(string $url): void
 // async time (the fetch) has passed — a plain synchronous window.open() of
 // a real URL, whose resolution happens server-side before the redirect,
 // doesn't hit that heuristic at all.
-function handle_stream_redirect(string $url, bool $wantVideo = false): void
+// $height: 0 for the audio stream, or a specific progressive video height
+// (e.g. 360, 480, 720 — whatever handle_list_video_qualities offered for
+// this video) to open that exact rendition.
+function handle_stream_redirect(string $url, int $height = 0): void
 {
     if (!is_youtube_url($url)) {
         http_response_code(400);
@@ -846,18 +849,28 @@ function handle_stream_redirect(string $url, bool $wantVideo = false): void
 
     // Reuse whatever was last resolved for this exact video — either by
     // attempt_direct_http_play at OwnTone-mode play time, or by an earlier
-    // call to this same route (Local mode's <audio> src and the disc/title
-    // click all hit this route directly and never go through
+    // call to this same route (Local mode's <audio> src and the disc/
+    // status-badge click all hit this route directly and never go through
     // attempt_direct_http_play, so this route has to populate the cache
     // itself too, or Local mode never benefits from it at all).
-    $streamUrl = $wantVideo ? get_cached_video_stream_url($url) : get_cached_stream_url($url);
+    $streamUrl = $height === 0 ? get_cached_stream_url($url) : get_cached_progressive_url_for_height($url, $height);
     if ($streamUrl === null) {
-        // Audio and video are always resolved (and cached) together in one
-        // yt-dlp call, regardless of which one was actually asked for —
-        // whichever gets clicked next is then already cached too.
-        $resolved = resolve_direct_stream_urls($url);
-        cache_resolved_stream_urls($url, $resolved['audio'], $resolved['video']);
-        $streamUrl = $wantVideo ? $resolved['video'] : $resolved['audio'];
+        // Audio and every progressive quality are always resolved (and
+        // cached) together in one yt-dlp call, regardless of which one was
+        // actually asked for — whichever gets clicked next is then already
+        // cached too.
+        $resolved = resolve_all_stream_variants($url);
+        cache_resolved_stream_variants($url, $resolved['audio'], $resolved['progressive']);
+        if ($height === 0) {
+            $streamUrl = $resolved['audio'];
+        } else {
+            foreach ($resolved['progressive'] as $variant) {
+                if ($variant['height'] === $height) {
+                    $streamUrl = $variant['url'];
+                    break;
+                }
+            }
+        }
         if ($streamUrl === null) {
             http_response_code(502);
             echo 'could not resolve a direct stream url';
@@ -866,6 +879,34 @@ function handle_stream_redirect(string $url, bool $wantVideo = false): void
     }
 
     header('Location: ' . $streamUrl, true, 302);
+}
+
+// Powers the quality-picker modal (status-badge click): resolves (or
+// reuses the cache) and reports every progressive video quality actually
+// available for this video, so the frontend can offer exactly those —
+// never a resolution that doesn't exist as a single openable link (see
+// resolve_all_stream_variants for why higher resolutions usually aren't
+// progressive at all).
+function handle_list_video_qualities(string $url): void
+{
+    if (!is_youtube_url($url)) {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'message' => 'not a valid YouTube URL']);
+        return;
+    }
+
+    $variants = get_cached_progressive_variants($url);
+    if (empty($variants)) {
+        $resolved = resolve_all_stream_variants($url);
+        cache_resolved_stream_variants($url, $resolved['audio'], $resolved['progressive']);
+        $variants = $resolved['progressive'];
+    }
+
+    $qualities = array_map(function ($variant) {
+        return ['height' => $variant['height'], 'label' => $variant['height'] . 'p'];
+    }, $variants);
+
+    echo json_encode(['status' => 'ok', 'qualities' => $qualities]);
 }
 
 // Streams an OwnTone GET response straight through, byte for byte — used
@@ -1094,56 +1135,85 @@ function stop_existing_pipeline(): void
     shell_exec('pkill -9 -f ' . escapeshellarg(OUR_FFMPEG_PATTERN) . ' 2>/dev/null');
 }
 
-// Resolves a video straight to its underlying CDN audio/video URLs — no
-// download, just format-selection metadata. See resolve_direct_stream_urls
-// for why this is tried before falling back to the fifo pipeline at all.
-//
-// Prefers m4a over the plain "bestaudio" selector (usually opus-in-webm):
-// confirmed live that OwnTone/ffmpeg can't seek an opus/webm stream over
-// HTTP (player_playback_seek succeeds but progress never actually moves),
-// while an m4a/mp4 stream seeks correctly — mp4's moov atom index makes it
-// randomly seekable in a way a live opus/webm stream isn't. Falls back to
-// bestaudio for the rare video with no m4a rendition.
-// Resolves BOTH the audio-only and progressive video+audio CDN urls in one
-// yt-dlp invocation — comma-separated format selectors make yt-dlp -g print
-// one url per line, in selector order, which is half the yt-dlp round-trips
-// (~10s each) of resolving them separately.
-//
-// Audio selector prefers m4a over the plain "bestaudio" selector (usually
-// opus-in-webm): confirmed live that OwnTone/ffmpeg can't seek an opus/webm
-// stream over HTTP (player_playback_seek succeeds but progress never
-// actually moves), while an m4a/mp4 stream seeks correctly — mp4's moov
-// atom index makes it randomly seekable in a way a live opus/webm stream
-// isn't. Video selector prefers a single progressive mp4 (video+audio
-// muxed together) since -g needs one directly fetchable url — an
-// adaptive-only "bestvideo" selection has no audio track of its own.
-function build_resolve_direct_stream_urls_cmd(string $youtubeUrl): string
+// Resolves every available format's metadata (including each one's own
+// direct CDN url) in a single yt-dlp invocation (--dump-json), then picks:
+// - the best audio-only rendition, preferring m4a — confirmed live that
+//   OwnTone/ffmpeg can't seek an opus/webm stream over HTTP
+//   (player_playback_seek succeeds but progress never actually moves),
+//   while an m4a/mp4 stream seeks correctly (mp4's moov atom index makes
+//   it randomly seekable in a way a live opus/webm stream isn't).
+// - every *progressive* format — a single url with both video and audio
+//   muxed together. YouTube only offers these up to a fairly low
+//   resolution (often 360-720p, sometimes just one); anything higher is
+//   video-only/audio-only (adaptive/DASH) with no single directly-
+//   fetchable url, since combining them needs local muxing (ffmpeg), which
+//   this app deliberately avoids for performance on this host.
+function build_resolve_all_formats_cmd(string $youtubeUrl): string
 {
     return sprintf(
-        '%s 20 %s --no-playlist -f "bestaudio[ext=m4a]/bestaudio,best[ext=mp4]/best" -g %s 2>/dev/null',
+        '%s 20 %s --no-playlist -j %s 2>/dev/null',
         TIMEOUT_BIN,
         YTDLP_BIN,
         escapeshellarg($youtubeUrl)
     );
 }
 
-// Returns ['audio' => ?string, 'video' => ?string] — either can be null if
-// yt-dlp didn't resolve that format (e.g. some videos have no progressive
-// mp4 rendition at all).
-function resolve_direct_stream_urls(string $youtubeUrl): array
+// Pure: picks the best audio-only format (preferring m4a) and every
+// progressive (video+audio muxed) format, deduped to the highest-bitrate
+// rendition at each height, sorted highest resolution first. Split out
+// from resolve_all_stream_variants (which does the actual yt-dlp/JSON
+// decode) so this selection logic is testable against a synthetic
+// yt-dlp -j formats array without shelling out.
+function parse_stream_variants_from_formats(array $formats): array
 {
-    $out = trim((string) shell_exec(build_resolve_direct_stream_urls_cmd($youtubeUrl)));
-    $lines = array_values(array_filter(
-        array_map('trim', explode("\n", $out)),
-        function ($line) {
-            return preg_match('#^https?://#i', $line);
-        }
-    ));
+    $bestAudioUrl = null;
+    $bestAudioIsM4a = false;
+    $bestAudioBitrate = -1.0;
+    $progressiveByHeight = [];
 
-    return [
-        'audio' => $lines[0] ?? null,
-        'video' => $lines[1] ?? null,
-    ];
+    foreach ($formats as $format) {
+        if (!is_array($format) || !is_string($format['url'] ?? null)) {
+            continue;
+        }
+        $hasVideo = ($format['vcodec'] ?? 'none') !== 'none';
+        $hasAudio = ($format['acodec'] ?? 'none') !== 'none';
+
+        if ($hasAudio && !$hasVideo) {
+            $isM4a = ($format['ext'] ?? '') === 'm4a';
+            $bitrate = (float) ($format['abr'] ?? $format['tbr'] ?? 0);
+            if ($bestAudioUrl === null || ($isM4a && !$bestAudioIsM4a) || ($isM4a === $bestAudioIsM4a && $bitrate > $bestAudioBitrate)) {
+                $bestAudioUrl = $format['url'];
+                $bestAudioIsM4a = $isM4a;
+                $bestAudioBitrate = $bitrate;
+            }
+        } elseif ($hasAudio && $hasVideo) {
+            $height = (int) ($format['height'] ?? 0);
+            if ($height <= 0) {
+                continue;
+            }
+            $bitrate = (float) ($format['tbr'] ?? 0);
+            if (!isset($progressiveByHeight[$height]) || $bitrate > $progressiveByHeight[$height]['bitrate']) {
+                $progressiveByHeight[$height] = ['height' => $height, 'url' => $format['url'], 'bitrate' => $bitrate];
+            }
+        }
+    }
+
+    krsort($progressiveByHeight);
+    $progressive = array_values(array_map(function ($entry) {
+        return ['height' => $entry['height'], 'url' => $entry['url']];
+    }, $progressiveByHeight));
+
+    return ['audio' => $bestAudioUrl, 'progressive' => $progressive];
+}
+
+// Returns ['audio' => ?string, 'progressive' => [['height' => int, 'url' => string], ...]]
+function resolve_all_stream_variants(string $youtubeUrl): array
+{
+    $json = (string) shell_exec(build_resolve_all_formats_cmd($youtubeUrl));
+    $data = json_decode($json, true);
+    $formats = is_array($data['formats'] ?? null) ? $data['formats'] : [];
+
+    return parse_stream_variants_from_formats($formats);
 }
 
 // Pure: the CDN url itself embeds the media's own duration (dur=, seconds,
@@ -1162,12 +1232,11 @@ function extract_stream_url_duration_seconds(string $streamUrl): float
 
 // server-side cache, keyed by video url only — the resolved CDN urls are
 // the same regardless of which UI path (OwnTone-mode play, Local-mode
-// <audio>, the disc/title click) asked for them, so there's no reason to
-// keep separate copies per mode. Audio and video share one entry per video
-// (each resolved together, see resolve_direct_stream_urls) but are cached/
-// expired independently, since either can be null/missing for a given
-// video and that shouldn't invalidate the other.
-function cache_resolved_stream_urls(string $youtubeUrl, ?string $audioStreamUrl, ?string $videoStreamUrl, string $path = RESOLVED_STREAM_CACHE_FILE): void
+// <audio>, the disc/status-badge click) asked for them, so there's no
+// reason to keep separate copies per mode. Audio and every progressive
+// variant share one entry per video (all resolved together, see
+// resolve_all_stream_variants) but are cached/expired independently.
+function cache_resolved_stream_variants(string $youtubeUrl, ?string $audioStreamUrl, array $progressiveVariants, string $path = RESOLVED_STREAM_CACHE_FILE): void
 {
     $cache = read_json_file($path);
     if (!is_array($cache)) {
@@ -1178,9 +1247,14 @@ function cache_resolved_stream_urls(string $youtubeUrl, ?string $audioStreamUrl,
         $entry['stream_url'] = $audioStreamUrl;
         $entry['duration_seconds'] = extract_stream_url_duration_seconds($audioStreamUrl);
     }
-    if ($videoStreamUrl !== null) {
-        $entry['video_stream_url'] = $videoStreamUrl;
-        $entry['video_duration_seconds'] = extract_stream_url_duration_seconds($videoStreamUrl);
+    if (!empty($progressiveVariants)) {
+        $entry['progressive'] = array_map(function ($variant) {
+            return [
+                'height' => $variant['height'],
+                'url' => $variant['url'],
+                'duration_seconds' => extract_stream_url_duration_seconds($variant['url']),
+            ];
+        }, $progressiveVariants);
     }
     $cache[$youtubeUrl] = $entry;
 
@@ -1233,18 +1307,38 @@ function get_cached_stream_url(string $youtubeUrl, string $path = RESOLVED_STREA
     return $entry['stream_url'];
 }
 
-function get_cached_video_stream_url(string $youtubeUrl, string $path = RESOLVED_STREAM_CACHE_FILE): ?string
+// Returns only the still-valid (unexpired) cached progressive variants,
+// sorted highest resolution first (the cache write already sorts them, but
+// re-checking here keeps this function's contract self-contained).
+function get_cached_progressive_variants(string $youtubeUrl, string $path = RESOLVED_STREAM_CACHE_FILE): array
 {
     $cache = read_json_file($path);
     $entry = $cache[$youtubeUrl] ?? null;
-    if (!is_array($entry) || !is_string($entry['video_stream_url'] ?? null)) {
-        return null;
+    if (!is_array($entry) || !is_array($entry['progressive'] ?? null)) {
+        return [];
     }
-    $durationSeconds = (float) ($entry['video_duration_seconds'] ?? 0);
-    if (is_stream_url_expired($entry['video_stream_url'], $durationSeconds, time())) {
-        return null;
+
+    $now = time();
+    $variants = array_values(array_filter($entry['progressive'], function ($variant) use ($now) {
+        return is_array($variant)
+            && is_string($variant['url'] ?? null)
+            && !is_stream_url_expired($variant['url'], (float) ($variant['duration_seconds'] ?? 0), $now);
+    }));
+    usort($variants, function ($a, $b) {
+        return $b['height'] <=> $a['height'];
+    });
+
+    return $variants;
+}
+
+function get_cached_progressive_url_for_height(string $youtubeUrl, int $height, string $path = RESOLVED_STREAM_CACHE_FILE): ?string
+{
+    foreach (get_cached_progressive_variants($youtubeUrl, $path) as $variant) {
+        if ((int) $variant['height'] === $height) {
+            return $variant['url'];
+        }
     }
-    return $entry['video_stream_url'];
+    return null;
 }
 
 // The browser never talks to OwnTone directly — it only ever calls
@@ -1316,14 +1410,14 @@ function attempt_direct_http_play(string $youtubeUrl, string $title, string $cha
     // Same cache-first policy as handle_stream_redirect: every resolved url
     // gets cached, and only actually re-resolved once its own expire=
     // timestamp says it's no longer good — not on every play. Audio and
-    // video are resolved together in one yt-dlp call either way, so a
-    // later click on the video-stream link is already cached too.
+    // every progressive video quality are resolved together in one yt-dlp
+    // call either way, so the quality-picker modal is already cached too.
     $streamUrl = get_cached_stream_url($youtubeUrl);
-    $videoStreamUrl = null;
+    $progressiveVariants = [];
     if ($streamUrl === null) {
-        $resolved = resolve_direct_stream_urls($youtubeUrl);
+        $resolved = resolve_all_stream_variants($youtubeUrl);
         $streamUrl = $resolved['audio'];
-        $videoStreamUrl = $resolved['video'];
+        $progressiveVariants = $resolved['progressive'];
         if ($streamUrl === null) {
             return null;
         }
@@ -1353,7 +1447,7 @@ function attempt_direct_http_play(string $youtubeUrl, string $title, string $cha
         return null;
     }
 
-    cache_resolved_stream_urls($youtubeUrl, $streamUrl, $videoStreamUrl);
+    cache_resolved_stream_variants($youtubeUrl, $streamUrl, $progressiveVariants);
 
     // OwnTone has no tags to scan from a bare CDN url, so metadata (title
     // shown in its UI/AirPlay clients) has to be set explicitly here —
@@ -1755,7 +1849,7 @@ if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
     // targets), not JSON POST actions like everything else below.
     $getAction = $_GET['action'] ?? '';
     if ($getAction === 'stream_redirect') {
-        handle_stream_redirect((string) ($_GET['url'] ?? ''), ($_GET['video'] ?? '') === '1');
+        handle_stream_redirect((string) ($_GET['url'] ?? ''), (int) ($_GET['height'] ?? 0));
         return;
     }
     if ($getAction === 'owntone_artwork') {
@@ -1815,6 +1909,8 @@ if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
         handle_resolve_url((string) ($_POST['url'] ?? ''));
     } elseif ($action === 'resolve_mix_playlist') {
         handle_resolve_mix_playlist((string) ($_POST['url'] ?? ''));
+    } elseif ($action === 'list_video_qualities') {
+        handle_list_video_qualities((string) ($_POST['url'] ?? ''));
     } elseif ($action === 'owntone_player') {
         handle_owntone_player();
     } elseif ($action === 'owntone_queue') {
