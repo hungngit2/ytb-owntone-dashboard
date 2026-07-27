@@ -16,6 +16,21 @@ const ICONS = {
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>',
 };
 
+// iOS Safari silently ignores HTMLMediaElement.volume — it's a WebKit
+// platform restriction (volume can only be changed via the hardware
+// buttons/Control Center), not a bug in our code, confirmed live on an
+// iPhone SE. No feature-detection is possible (the setter doesn't throw,
+// it just has no audible effect), so this is a UA sniff to at least tell
+// the user why the slider does nothing in Local mode, rather than let it
+// look broken. iPadOS 13+ disguises itself as "MacIntel" in the UA, hence
+// the maxTouchPoints check.
+function isIOS(userAgent, platform, maxTouchPoints) {
+  if (/iPad|iPhone|iPod/.test(userAgent)) {
+    return true;
+  }
+  return platform === 'MacIntel' && maxTouchPoints > 1;
+}
+
 function isYoutubeUrl(input) {
   return /^https?:\/\/(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)/i.test(
     input.trim()
@@ -95,6 +110,7 @@ function mapQueueResponse(queue, currentItemId) {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
+    isIOS,
     isYoutubeUrl,
     isYoutubePlaylistUrl,
     isYoutubeMixPlaylistUrl,
@@ -224,6 +240,9 @@ function applyPlayModeUI() {
   document.getElementById('ws-status').hidden = local;
   document.getElementById('play-mode-toggle').dataset.mode = playMode;
   document.getElementById('progress-track').classList.toggle('seekable', local || Boolean(serverQueue.seekable));
+  // iOS Safari silently ignores HTMLMediaElement.volume (see isIOS) — the
+  // slider would just look broken in Local mode there, so hide it entirely.
+  document.getElementById('volume-row').hidden = local && isIOS(navigator.userAgent, navigator.platform, navigator.maxTouchPoints);
   if (local) {
     loadLocalPlaybackPrefs();
   }

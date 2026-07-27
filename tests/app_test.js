@@ -1,5 +1,6 @@
 const assert = require('assert');
 const {
+  isIOS,
   isYoutubeUrl,
   isYoutubePlaylistUrl,
   isYoutubeMixPlaylistUrl,
@@ -98,5 +99,12 @@ assert.strictEqual(sanitizeVolume('50'), null, 'rejects a non-number');
 
 const garbageVolumePlayer = mapPlayerResponse({ state: 'stop', item_progress_ms: 0, item_length_ms: 0, volume: 773094144, item_id: null });
 assert.strictEqual(garbageVolumePlayer.volume, null, 'mapPlayerResponse sanitizes an out-of-range volume to null');
+
+assert.strictEqual(isIOS('Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15', 'iPhone', 0), true, 'detects an iPhone user agent');
+assert.strictEqual(isIOS('Mozilla/5.0 (iPad; CPU OS 16_5 like Mac OS X) AppleWebKit/605.1.15', 'iPad', 0), true, 'detects an iPad user agent');
+assert.strictEqual(isIOS('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 'MacIntel', 5), true, 'detects iPadOS 13+ disguised as MacIntel via maxTouchPoints');
+assert.strictEqual(isIOS('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 'MacIntel', 0), false, 'a real Mac (no touch points) is not iOS');
+assert.strictEqual(isIOS('Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Win32', 0), false, 'a Windows user agent is not iOS');
+assert.strictEqual(isIOS('Mozilla/5.0 (Linux; Android 13)', 'Linux armv8l', 5), false, 'an Android user agent (also touch-capable) is not iOS');
 
 console.log('All app.js helper tests passed.');
