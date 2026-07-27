@@ -1948,7 +1948,7 @@ if (typeof document !== 'undefined') {
   // rarely offers progressive, single-url streams above ~720p).
   async function openQualityModal() {
     const webpageUrl = currentWebpageUrl();
-    if (!webpageUrl) {
+    if (!webpageUrl || !lastKnownIsPlaying) {
       return;
     }
 
