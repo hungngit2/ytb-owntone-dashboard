@@ -1241,6 +1241,11 @@ async function playLocalQueueItem(items, index, triggerBtn) {
 
     audio.src = `backend.php?action=stream_redirect&url=${encodeURIComponent(item.webpage_url)}`;
     audio.volume = Number(document.getElementById('volume-slider').value) / 100;
+    // stream-btn's "Listen in browser" feature shares this same <audio>
+    // element and can leave .muted stuck true — volume changes have no
+    // audible effect while that's set, independent of .volume (confirmed
+    // live: this silently broke Local mode volume after using stream-btn).
+    audio.muted = false;
     await audio.play();
 
     titleEl.classList.remove('loading');
@@ -1498,7 +1503,9 @@ function setVolume(volume) {
   reflectVolumeUI(volume);
   if (isLocalMode()) {
     localStorage.setItem(LS_KEYS.volume, String(volume));
-    document.getElementById('browser-stream-audio').volume = volume / 100;
+    const audio = document.getElementById('browser-stream-audio');
+    audio.volume = volume / 100;
+    audio.muted = false; // stream-btn can leave this stuck true — see playLocalQueueItem
     return;
   }
 
@@ -1808,7 +1815,9 @@ if (typeof document !== 'undefined') {
     document.getElementById('volume-value').textContent = `${volume}%`;
     document.getElementById('volume-mute-btn').innerHTML = volume > 0 ? ICONS.volume : ICONS.muted;
     if (isLocalMode()) {
-      document.getElementById('browser-stream-audio').volume = volume / 100;
+      const audio = document.getElementById('browser-stream-audio');
+      audio.volume = volume / 100;
+      audio.muted = false;
     }
   });
 
