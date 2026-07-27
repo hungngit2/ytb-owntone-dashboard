@@ -133,6 +133,9 @@ function loadLocalQueue() {
   const stored = readLocalStorageJson(LS_KEYS.queue, null);
   if (stored && Array.isArray(stored.items) && Number.isInteger(stored.current_index)) {
     localQueue = stored;
+    if (!Number.isFinite(localQueue.progress_seconds)) {
+      localQueue.progress_seconds = 0;
+    }
   }
 }
 
@@ -1181,6 +1184,19 @@ function applyLocalPlayerState(isPlaying, progressSeconds, durationSeconds) {
   startProgressTicker(isPlaying, progressSeconds, durationSeconds);
 }
 
+// Throttled so a reload/crash loses at most ~3s of resume position — saving
+// on every 'timeupdate' (fires several times/sec) would hammer localStorage
+// for no real benefit.
+let lastLocalProgressSaveMs = 0;
+
+function saveLocalProgress(currentTime) {
+  if (localQueue.current_index < 0) {
+    return;
+  }
+  localQueue.progress_seconds = currentTime;
+  saveLocalQueue();
+}
+
 function updateLocalProgressFromAudio() {
   if (!isLocalMode()) {
     return;
@@ -1195,6 +1211,12 @@ function updateLocalProgressFromAudio() {
   }
   progressSyncedAtMs = Date.now();
   updateProgressDisplay(syncedProgressSeconds, syncedDurationSeconds);
+
+  const now = Date.now();
+  if (now - lastLocalProgressSaveMs >= 3000) {
+    lastLocalProgressSaveMs = now;
+    saveLocalProgress(syncedProgressSeconds);
+  }
 }
 
 function handleLocalTrackEnded() {
@@ -1236,7 +1258,7 @@ async function playLocalQueueItem(items, index, triggerBtn) {
       channel: item.channel || null,
       webpageUrl: item.webpage_url,
     };
-    localQueue = { items, current_index: index };
+    localQueue = { items, current_index: index, progress_seconds: 0 };
     saveLocalQueue();
 
     audio.src = `backend.php?action=stream_redirect&url=${encodeURIComponent(item.webpage_url)}`;
@@ -1568,6 +1590,7 @@ async function seekTo(targetSeconds) {
     const clamped = Math.max(0, Math.min(targetSeconds, audio.duration));
     audio.currentTime = clamped;
     applyLocalPlayerState(!audio.paused, clamped, audio.duration);
+    saveLocalProgress(clamped);
     return;
   }
 
@@ -1904,6 +1927,19 @@ if (typeof document !== 'undefined') {
       document.getElementById('disc').classList.remove('loading');
     }
   });
+  // Immediate saves at the two moments most likely to precede a reload —
+  // the throttled save in updateLocalProgressFromAudio alone could lose up
+  // to ~3s of position otherwise.
+  localAudio.addEventListener('pause', () => {
+    if (isLocalMode() && localAudio.src) {
+      saveLocalProgress(localAudio.currentTime || 0);
+    }
+  });
+  window.addEventListener('beforeunload', () => {
+    if (isLocalMode() && localAudio.src) {
+      saveLocalProgress(localAudio.currentTime || 0);
+    }
+  });
 
   playMode = localStorage.getItem(LS_KEYS.playMode) || 'owntone';
   if (playMode !== 'local' && playMode !== 'owntone') {
@@ -1915,7 +1951,49 @@ if (typeof document !== 'undefined') {
 
   if (isLocalMode()) {
     disconnectOwnToneLiveUpdates();
+    resumeLocalPlaybackFromStorage();
   } else {
     connectOwnToneLiveUpdates();
   }
+}
+
+// Restores whatever localQueue (loaded from localStorage by
+// loadLocalPlaybackPrefs -> loadLocalQueue, above) says was playing, cued
+// up at its saved position — a reload otherwise loses this entirely, since
+// Local mode has no server-side daemon/state the way OwnTone mode does.
+// Doesn't force-start playback: most browsers block unmuted autoplay
+// without a user gesture anyway, so this leaves it paused and ready —
+// pressing Play resumes exactly where it left off.
+function resumeLocalPlaybackFromStorage() {
+  const item = localQueue.items[localQueue.current_index];
+  if (!item || !isYoutubeUrl(item.webpage_url)) {
+    return;
+  }
+
+  const resumeAt = Number(localQueue.progress_seconds) || 0;
+  currentTrackInfo = {
+    title: item.title || null,
+    thumbnail: item.thumbnail || null,
+    channel: item.channel || null,
+    webpageUrl: item.webpage_url,
+  };
+
+  const audio = document.getElementById('browser-stream-audio');
+  audio.src = `backend.php?action=stream_redirect&url=${encodeURIComponent(item.webpage_url)}`;
+  audio.volume = Number(document.getElementById('volume-slider').value) / 100;
+  audio.muted = false;
+
+  const onReady = () => {
+    audio.removeEventListener('loadedmetadata', onReady);
+    if (resumeAt > 0 && resumeAt < (audio.duration || Infinity)) {
+      audio.currentTime = resumeAt;
+    }
+    applyLocalPlayerState(false, audio.currentTime || 0, Number.isFinite(audio.duration) ? audio.duration : 0);
+    // Best-effort — browsers routinely block this without a user gesture,
+    // which just leaves it paused at the right position, exactly as intended.
+    audio.play().catch(() => {});
+  };
+  audio.addEventListener('loadedmetadata', onReady);
+
+  renderNowPlaying();
 }

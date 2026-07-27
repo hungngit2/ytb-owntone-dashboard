@@ -324,19 +324,36 @@ assert_true(
 
 unlink($tmpConfirmedFile);
 
+$futureExpireUrl = 'https://cdn.example/aaa.m4a?expire=' . (time() + 3600);
+$pastExpireUrl = 'https://cdn.example/aaa.m4a?expire=' . (time() - 3600);
+
+assert_true(!is_stream_url_expired($futureExpireUrl, time()), 'a url expiring an hour from now is not expired');
+assert_true(is_stream_url_expired($pastExpireUrl, time()), 'a url that already expired an hour ago is expired');
+assert_true(
+    is_stream_url_expired('https://cdn.example/aaa.m4a?expire=' . (time() + 30), time()),
+    'a url expiring in 30s is treated as expired already, inside the 60s safety buffer'
+);
+assert_true(is_stream_url_expired('https://cdn.example/aaa.m4a', time()), 'a url with no expire param at all is treated as expired');
+assert_true(is_stream_url_expired('https://cdn.example/aaa.m4a?expire=notanumber', time()), 'a non-numeric expire value is treated as expired');
+
 $tmpStreamCacheFile = sys_get_temp_dir() . '/backend_test_stream_cache_' . uniqid() . '.json';
 assert_true(
     get_cached_stream_url('https://youtu.be/aaa', $tmpStreamCacheFile) === null,
     'get_cached_stream_url is a miss when nothing has been cached yet'
 );
-cache_resolved_stream_url('https://youtu.be/aaa', 'https://cdn.example/aaa.m4a', $tmpStreamCacheFile);
+cache_resolved_stream_url('https://youtu.be/aaa', $futureExpireUrl, $tmpStreamCacheFile);
 assert_true(
-    get_cached_stream_url('https://youtu.be/aaa', $tmpStreamCacheFile) === 'https://cdn.example/aaa.m4a',
-    'get_cached_stream_url hits for the exact url just cached'
+    get_cached_stream_url('https://youtu.be/aaa', $tmpStreamCacheFile) === $futureExpireUrl,
+    'get_cached_stream_url hits for the exact url just cached, while still unexpired'
 );
 assert_true(
     get_cached_stream_url('https://youtu.be/bbb', $tmpStreamCacheFile) === null,
     'get_cached_stream_url is a miss for a different url than the one cached'
+);
+cache_resolved_stream_url('https://youtu.be/aaa', $pastExpireUrl, $tmpStreamCacheFile);
+assert_true(
+    get_cached_stream_url('https://youtu.be/aaa', $tmpStreamCacheFile) === null,
+    'get_cached_stream_url is a miss once the cached url has actually expired'
 );
 unlink($tmpStreamCacheFile);
 

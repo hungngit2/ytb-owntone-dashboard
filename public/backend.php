@@ -1126,16 +1126,41 @@ function cache_resolved_stream_url(string $youtubeUrl, string $streamUrl, string
     file_put_contents($path, json_encode(['youtube_url' => $youtubeUrl, 'stream_url' => $streamUrl]));
 }
 
-// Only returns a hit for the exact url last resolved — anything else (a
-// different track, or nothing cached yet) is a miss, letting the caller
-// fall back to a fresh resolve.
+// Pure: does this resolved CDN url's own expire= timestamp mean it's no
+// longer (or almost no longer) usable? A buffer avoids handing back a url
+// that expires moments after this check passes. Missing/unparseable expire
+// data is treated as expired — safer to re-resolve than risk serving a url
+// we can't actually verify.
+function is_stream_url_expired(string $streamUrl, int $nowUnixSeconds, int $bufferSeconds = 60): bool
+{
+    $query = parse_url($streamUrl, PHP_URL_QUERY);
+    if (!is_string($query) || $query === '') {
+        return true;
+    }
+    parse_str($query, $params);
+    if (!isset($params['expire']) || !ctype_digit((string) $params['expire'])) {
+        return true;
+    }
+    return ((int) $params['expire'] - $bufferSeconds) <= $nowUnixSeconds;
+}
+
+// Only returns a hit for the exact url last resolved, and only while its
+// own expire= timestamp is still good — anything else (a different track,
+// nothing cached yet, or an expired resolve) is a miss, letting the caller
+// fall back to a fresh resolve. Matters especially for a Local-mode resume
+// long after the original resolve (a reload hours later, say), where the
+// cached url may genuinely no longer work.
 function get_cached_stream_url(string $youtubeUrl, string $path = RESOLVED_STREAM_CACHE_FILE): ?string
 {
     $cached = read_json_file($path);
     if (($cached['youtube_url'] ?? null) !== $youtubeUrl) {
         return null;
     }
-    return $cached['stream_url'] ?? null;
+    $streamUrl = $cached['stream_url'] ?? null;
+    if (!is_string($streamUrl) || is_stream_url_expired($streamUrl, time())) {
+        return null;
+    }
+    return $streamUrl;
 }
 
 // The browser never talks to OwnTone directly — it only ever calls
