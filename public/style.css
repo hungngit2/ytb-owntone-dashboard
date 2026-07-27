@@ -323,7 +323,6 @@ body {
   color: #fff;
   padding: 4px 8px;
   border-radius: 4px;
-  cursor: pointer;
 }
 
 #status-badge.playing {
@@ -1082,7 +1081,7 @@ body {
   }
 }
 
-/* ---- Quality-picker modal (status-badge click) ---- */
+/* ---- Quality-picker modal (disc click) ---- */
 
 #quality-modal-overlay {
   position: fixed;

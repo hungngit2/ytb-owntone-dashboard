@@ -1922,10 +1922,7 @@ if (typeof document !== 'undefined') {
   // that at all — the resolve delay just becomes normal page-load time in
   // the new tab.
   document.getElementById('disc').addEventListener('click', () => {
-    const webpageUrl = currentWebpageUrl();
-    if (webpageUrl) {
-      window.open(`backend.php?action=stream_redirect&url=${encodeURIComponent(webpageUrl)}`, '_blank');
-    }
+    openQualityModal();
   });
 
   document.getElementById('play-mode-toggle').addEventListener('click', () => {
@@ -1995,7 +1992,6 @@ if (typeof document !== 'undefined') {
     });
   }
 
-  document.getElementById('status-badge').addEventListener('click', openQualityModal);
   document.getElementById('quality-modal-close').addEventListener('click', closeQualityModal);
   document.getElementById('quality-modal-overlay').addEventListener('click', (event) => {
     if (event.target.id === 'quality-modal-overlay') {

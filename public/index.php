@@ -111,7 +111,7 @@ enforce_dashboard_auth();
     <div id="quality-modal-overlay" hidden>
       <div id="quality-modal">
         <div id="quality-modal-header">
-          <span>Open direct stream</span>
+          <span>Direct Stream</span>
           <button type="button" id="quality-modal-close" aria-label="Close">&times;</button>
         </div>
         <div id="quality-modal-body"></div>
