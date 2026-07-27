@@ -324,48 +324,46 @@ assert_true(
 
 unlink($tmpConfirmedFile);
 
-$futureExpireUrl = 'https://cdn.example/aaa.m4a?expire=' . (time() + 3600);
-$pastExpireUrl = 'https://cdn.example/aaa.m4a?expire=' . (time() - 3600);
+$now = time();
+$futureExpireUrl = 'https://cdn.example/aaa.m4a?expire=' . ($now + 3600) . '&dur=19.063';
+$pastExpireUrl = 'https://cdn.example/aaa.m4a?expire=' . ($now - 3600) . '&dur=19.063';
 
-assert_true(!is_stream_url_expired($futureExpireUrl, time()), 'a url expiring an hour from now is not expired');
-assert_true(is_stream_url_expired($pastExpireUrl, time()), 'a url that already expired an hour ago is expired');
+assert_true(extract_stream_url_duration_seconds($futureExpireUrl) === 19.063, 'extract_stream_url_duration_seconds reads dur= from the url');
+assert_true(extract_stream_url_duration_seconds('https://cdn.example/aaa.m4a') === 0.0, 'extract_stream_url_duration_seconds is 0 when dur= is absent');
+
+assert_true(!is_stream_url_expired($futureExpireUrl, 19.063, $now), 'a url expiring an hour from now easily outlasts a 19s track');
+assert_true(is_stream_url_expired($pastExpireUrl, 19.063, $now), 'a url that already expired an hour ago is expired');
 assert_true(
-    is_stream_url_expired('https://cdn.example/aaa.m4a?expire=' . (time() + 30), time()),
+    is_stream_url_expired('https://cdn.example/aaa.m4a?expire=' . ($now + 30), 0, $now),
     'a url expiring in 30s is treated as expired already, inside the 60s safety buffer'
 );
-assert_true(is_stream_url_expired('https://cdn.example/aaa.m4a', time()), 'a url with no expire param at all is treated as expired');
-assert_true(is_stream_url_expired('https://cdn.example/aaa.m4a?expire=notanumber', time()), 'a non-numeric expire value is treated as expired');
+// The actual point of the duration check: a url with plenty of raw time
+// left before expire= can still be unsafe to reuse if that's less than
+// the track's own duration (+ buffer) — playback would fail partway through.
+assert_true(
+    is_stream_url_expired('https://cdn.example/long.m4a?expire=' . ($now + 100), 3600, $now),
+    'a url expiring in 100s is unsafe for a 1-hour track even though "now" alone would look fine'
+);
+assert_true(is_stream_url_expired('https://cdn.example/aaa.m4a', 0, $now), 'a url with no expire param at all is treated as expired');
+assert_true(is_stream_url_expired('https://cdn.example/aaa.m4a?expire=notanumber', 0, $now), 'a non-numeric expire value is treated as expired');
 
 $tmpStreamCacheFile = sys_get_temp_dir() . '/backend_test_stream_cache_' . uniqid() . '.json';
 assert_true(
-    get_cached_stream_url('owntone', 'https://youtu.be/aaa', $tmpStreamCacheFile) === null,
+    get_cached_stream_url('https://youtu.be/aaa', $tmpStreamCacheFile) === null,
     'get_cached_stream_url is a miss when nothing has been cached yet'
 );
-cache_resolved_stream_url('owntone', 'https://youtu.be/aaa', $futureExpireUrl, $tmpStreamCacheFile);
+cache_resolved_stream_url('https://youtu.be/aaa', $futureExpireUrl, $tmpStreamCacheFile);
 assert_true(
-    get_cached_stream_url('owntone', 'https://youtu.be/aaa', $tmpStreamCacheFile) === $futureExpireUrl,
-    'get_cached_stream_url hits for the exact (mode, video) pair just cached, while still unexpired'
+    get_cached_stream_url('https://youtu.be/aaa', $tmpStreamCacheFile) === $futureExpireUrl,
+    'get_cached_stream_url hits for the exact video just cached, while still unexpired — regardless of which UI path asks'
 );
 assert_true(
-    get_cached_stream_url('owntone', 'https://youtu.be/bbb', $tmpStreamCacheFile) === null,
+    get_cached_stream_url('https://youtu.be/bbb', $tmpStreamCacheFile) === null,
     'get_cached_stream_url is a miss for a different video than the one cached'
 );
+cache_resolved_stream_url('https://youtu.be/aaa', $pastExpireUrl, $tmpStreamCacheFile);
 assert_true(
-    get_cached_stream_url('local', 'https://youtu.be/aaa', $tmpStreamCacheFile) === null,
-    'get_cached_stream_url is a miss for the other mode, even for the same video — modes do not share a cache slot'
-);
-cache_resolved_stream_url('local', 'https://youtu.be/aaa', $futureExpireUrl, $tmpStreamCacheFile);
-assert_true(
-    get_cached_stream_url('local', 'https://youtu.be/aaa', $tmpStreamCacheFile) === $futureExpireUrl,
-    'local mode gets its own cache entry for the same video, independent of the owntone-mode one'
-);
-assert_true(
-    get_cached_stream_url('owntone', 'https://youtu.be/aaa', $tmpStreamCacheFile) === $futureExpireUrl,
-    'caching the local-mode entry did not clobber the earlier owntone-mode entry for the same video'
-);
-cache_resolved_stream_url('owntone', 'https://youtu.be/aaa', $pastExpireUrl, $tmpStreamCacheFile);
-assert_true(
-    get_cached_stream_url('owntone', 'https://youtu.be/aaa', $tmpStreamCacheFile) === null,
+    get_cached_stream_url('https://youtu.be/aaa', $tmpStreamCacheFile) === null,
     'get_cached_stream_url is a miss once the cached url has actually expired'
 );
 unlink($tmpStreamCacheFile);

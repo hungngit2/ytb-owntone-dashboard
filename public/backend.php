@@ -836,24 +836,21 @@ function handle_resolve_url(string $url): void
 // async time (the fetch) has passed — a plain synchronous window.open() of
 // a real URL, whose resolution happens server-side before the redirect,
 // doesn't hit that heuristic at all.
-function handle_stream_redirect(string $url, string $mode): void
+function handle_stream_redirect(string $url): void
 {
     if (!is_youtube_url($url)) {
         http_response_code(400);
         echo 'not a valid YouTube URL';
         return;
     }
-    if ($mode !== 'owntone' && $mode !== 'local') {
-        $mode = 'local';
-    }
 
-    // Reuse whatever was last resolved for this exact (mode, video) pair —
-    // either by attempt_direct_http_play at OwnTone-mode play time, or by
-    // an earlier call to this same route (Local mode's <audio> src and the
-    // disc-click both hit this route directly and never go through
+    // Reuse whatever was last resolved for this exact video — either by
+    // attempt_direct_http_play at OwnTone-mode play time, or by an earlier
+    // call to this same route (Local mode's <audio> src and the disc-click
+    // both hit this route directly and never go through
     // attempt_direct_http_play, so this route has to populate the cache
     // itself too, or Local mode never benefits from it at all).
-    $streamUrl = get_cached_stream_url($mode, $url);
+    $streamUrl = get_cached_stream_url($url);
     if ($streamUrl === null) {
         $streamUrl = resolve_direct_stream_url($url);
         if ($streamUrl === null) {
@@ -861,7 +858,7 @@ function handle_stream_redirect(string $url, string $mode): void
             echo 'could not resolve a direct stream url';
             return;
         }
-        cache_resolved_stream_url($mode, $url, $streamUrl);
+        cache_resolved_stream_url($url, $streamUrl);
     }
 
     header('Location: ' . $streamUrl, true, 302);
@@ -1120,23 +1117,34 @@ function resolve_direct_stream_url(string $youtubeUrl): ?string
     return preg_match('#^https?://#i', $firstLine) ? $firstLine : null;
 }
 
-// Pure: the cache is keyed per playback mode AND per video — OwnTone mode
-// and Local mode each resolve/play independently (switching modes
-// mid-session shouldn't evict or collide with the other's entry), and
-// obviously different videos need their own entries too, not just the
-// single last-resolved one.
-function stream_cache_key(string $mode, string $youtubeUrl): string
+// Pure: the CDN url itself embeds the media's own duration (dur=, seconds,
+// e.g. "19.063") — read that instead of a separate yt-dlp/ffprobe lookup,
+// since we already have the url. Missing/unparseable is 0, which just
+// means is_stream_url_expired falls back to the flat buffer alone.
+function extract_stream_url_duration_seconds(string $streamUrl): float
 {
-    return $mode . '|' . $youtubeUrl;
+    $query = parse_url($streamUrl, PHP_URL_QUERY);
+    if (!is_string($query) || $query === '') {
+        return 0.0;
+    }
+    parse_str($query, $params);
+    return isset($params['dur']) && is_numeric($params['dur']) ? (float) $params['dur'] : 0.0;
 }
 
-function cache_resolved_stream_url(string $mode, string $youtubeUrl, string $streamUrl, string $path = RESOLVED_STREAM_CACHE_FILE): void
+// server-side cache, keyed by video url only — the resolved CDN url is the
+// same regardless of which UI path (OwnTone-mode play, Local-mode <audio>,
+// the disc-click) asked for it, so there's no reason to keep separate
+// copies per mode.
+function cache_resolved_stream_url(string $youtubeUrl, string $streamUrl, string $path = RESOLVED_STREAM_CACHE_FILE): void
 {
     $cache = read_json_file($path);
     if (!is_array($cache)) {
         $cache = [];
     }
-    $cache[stream_cache_key($mode, $youtubeUrl)] = $streamUrl;
+    $cache[$youtubeUrl] = [
+        'stream_url' => $streamUrl,
+        'duration_seconds' => extract_stream_url_duration_seconds($streamUrl),
+    ];
 
     $dir = dirname($path);
     if (!is_dir($dir)) {
@@ -1145,12 +1153,14 @@ function cache_resolved_stream_url(string $mode, string $youtubeUrl, string $str
     file_put_contents($path, json_encode($cache));
 }
 
-// Pure: does this resolved CDN url's own expire= timestamp mean it's no
-// longer (or almost no longer) usable? A buffer avoids handing back a url
-// that expires moments after this check passes. Missing/unparseable expire
-// data is treated as expired — safer to re-resolve than risk serving a url
-// we can't actually verify.
-function is_stream_url_expired(string $streamUrl, int $nowUnixSeconds, int $bufferSeconds = 60): bool
+// Pure: does this resolved CDN url's own expire= timestamp leave enough
+// runway to actually play the WHOLE track, not just start it? Comparing
+// only against "now" (ignoring duration) could hand back a url that's
+// still valid at request time but expires partway through playback —
+// requiring at least duration + a safety buffer of remaining validity
+// avoids that. Missing/unparseable expire data is treated as expired —
+// safer to re-resolve than risk serving a url we can't actually verify.
+function is_stream_url_expired(string $streamUrl, float $durationSeconds, int $nowUnixSeconds, int $bufferSeconds = 60): bool
 {
     $query = parse_url($streamUrl, PHP_URL_QUERY);
     if (!is_string($query) || $query === '') {
@@ -1160,24 +1170,29 @@ function is_stream_url_expired(string $streamUrl, int $nowUnixSeconds, int $buff
     if (!isset($params['expire']) || !ctype_digit((string) $params['expire'])) {
         return true;
     }
-    return ((int) $params['expire'] - $bufferSeconds) <= $nowUnixSeconds;
+    $remainingSeconds = (int) $params['expire'] - $nowUnixSeconds;
+    return $remainingSeconds < ($durationSeconds + $bufferSeconds);
 }
 
-// Only returns a hit for this exact (mode, video) pair, and only while its
-// own expire= timestamp is still good — anything else (a different video,
-// the other mode's entry, nothing cached yet, or an expired resolve) is a
-// miss, letting the caller fall back to a fresh resolve. The expiry check
-// matters especially for a Local-mode resume long after the original
-// resolve (a reload hours later, say), where the cached url may genuinely
-// no longer work.
-function get_cached_stream_url(string $mode, string $youtubeUrl, string $path = RESOLVED_STREAM_CACHE_FILE): ?string
+// Only returns a hit for this exact video, and only while there's enough
+// remaining validity (per the cached duration) to play it through —
+// anything else (a different video, nothing cached yet, or an expired
+// resolve) is a miss, letting the caller fall back to a fresh resolve. The
+// expiry check matters especially for a Local-mode resume long after the
+// original resolve (a reload hours later, say), where the cached url may
+// genuinely no longer work.
+function get_cached_stream_url(string $youtubeUrl, string $path = RESOLVED_STREAM_CACHE_FILE): ?string
 {
     $cache = read_json_file($path);
-    $streamUrl = $cache[stream_cache_key($mode, $youtubeUrl)] ?? null;
-    if (!is_string($streamUrl) || is_stream_url_expired($streamUrl, time())) {
+    $entry = $cache[$youtubeUrl] ?? null;
+    if (!is_array($entry) || !is_string($entry['stream_url'] ?? null)) {
         return null;
     }
-    return $streamUrl;
+    $durationSeconds = (float) ($entry['duration_seconds'] ?? 0);
+    if (is_stream_url_expired($entry['stream_url'], $durationSeconds, time())) {
+        return null;
+    }
+    return $entry['stream_url'];
 }
 
 // The browser never talks to OwnTone directly — it only ever calls
@@ -1249,7 +1264,7 @@ function attempt_direct_http_play(string $youtubeUrl, string $title, string $cha
     // Same cache-first policy as handle_stream_redirect: every resolved url
     // gets cached, and only actually re-resolved once its own expire=
     // timestamp says it's no longer good — not on every play.
-    $streamUrl = get_cached_stream_url('owntone', $youtubeUrl);
+    $streamUrl = get_cached_stream_url($youtubeUrl);
     if ($streamUrl === null) {
         $streamUrl = resolve_direct_stream_url($youtubeUrl);
         if ($streamUrl === null) {
@@ -1281,7 +1296,7 @@ function attempt_direct_http_play(string $youtubeUrl, string $title, string $cha
         return null;
     }
 
-    cache_resolved_stream_url('owntone', $youtubeUrl, $streamUrl);
+    cache_resolved_stream_url($youtubeUrl, $streamUrl);
 
     // OwnTone has no tags to scan from a bare CDN url, so metadata (title
     // shown in its UI/AirPlay clients) has to be set explicitly here —
@@ -1683,7 +1698,7 @@ if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
     // targets), not JSON POST actions like everything else below.
     $getAction = $_GET['action'] ?? '';
     if ($getAction === 'stream_redirect') {
-        handle_stream_redirect((string) ($_GET['url'] ?? ''), (string) ($_GET['mode'] ?? ''));
+        handle_stream_redirect((string) ($_GET['url'] ?? ''));
         return;
     }
     if ($getAction === 'owntone_artwork') {
