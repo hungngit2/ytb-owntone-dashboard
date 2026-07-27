@@ -229,12 +229,24 @@ body {
   display: block;
 }
 
-.hero-text {
+/* Wraps hero-text + hero-top-right so hero-top-right's own natural width
+   (it grew over time: mode toggle, status/fifo/ws indicators, stream-btn)
+   pushes hero-text's available space instead of a stale fixed right:90px
+   overlapping it once that row got wider (confirmed live). */
+.hero-top-row {
   position: absolute;
   top: 8px;
   left: 8px;
-  right: 90px;
+  right: 8px;
   z-index: 2;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.hero-text {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 #now-title {
@@ -288,14 +300,12 @@ body {
 }
 
 .hero-top-right {
-  position: absolute;
-  top: 8px;
-  right: 8px;
   z-index: 3;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   gap: 6px;
+  flex-shrink: 0;
 }
 
 .hero-status-row,
