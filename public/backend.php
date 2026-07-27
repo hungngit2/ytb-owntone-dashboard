@@ -1229,9 +1229,15 @@ function owntone_post_status(string $path): int
 // surfacing this as a user-facing error.
 function attempt_direct_http_play(string $youtubeUrl, string $title, string $channel, string $thumbnailUrl): ?array
 {
-    $streamUrl = resolve_direct_stream_url($youtubeUrl);
+    // Same cache-first policy as handle_stream_redirect: every resolved url
+    // gets cached, and only actually re-resolved once its own expire=
+    // timestamp says it's no longer good — not on every play.
+    $streamUrl = get_cached_stream_url($youtubeUrl);
     if ($streamUrl === null) {
-        return null;
+        $streamUrl = resolve_direct_stream_url($youtubeUrl);
+        if ($streamUrl === null) {
+            return null;
+        }
     }
 
     $httpStatus = owntone_post_status('/api/queue/items/add?uris=' . rawurlencode($streamUrl) . '&clear=true&playback=start');
