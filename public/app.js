@@ -1598,6 +1598,44 @@ function updateProgressDisplay(progressSeconds, durationSeconds) {
   document.getElementById('progress-fill').style.width = `${pct}%`;
   document.getElementById('time-current').textContent = formatTime(Math.floor(progressSeconds));
   document.getElementById('time-total').textContent = formatTime(Math.floor(durationSeconds));
+  maybePrefetchNextStream(progressSeconds, durationSeconds);
+}
+
+// How far ahead of a track ending to warm the next track's direct-stream
+// URL cache — long enough to hide a yt-dlp resolve behind still-playing
+// audio, short enough not to burn a prefetch on a track the user skips
+// past. Single spot (called from updateProgressDisplay, which both the
+// OwnTone progress ticker and Local mode's 'timeupdate' feed into) so
+// both playback modes get this for free.
+const STREAM_PREFETCH_LEAD_SECONDS = 8;
+let prefetchedStreamForUrl = null;
+
+function prefetchStreamUrl(webpageUrl) {
+  if (!webpageUrl || prefetchedStreamForUrl === webpageUrl) {
+    return;
+  }
+  prefetchedStreamForUrl = webpageUrl;
+  fetch('backend.php', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `action=prefetch_stream_url&url=${encodeURIComponent(webpageUrl)}`,
+  }).catch(() => {});
+}
+
+function maybePrefetchNextStream(progressSeconds, durationSeconds) {
+  if (!autoAdvanceEnabled || durationSeconds <= 0) {
+    return;
+  }
+  const remaining = durationSeconds - progressSeconds;
+  if (remaining <= 0 || remaining > STREAM_PREFETCH_LEAD_SECONDS) {
+    return;
+  }
+  const queue = isLocalMode() ? localQueue : serverQueue;
+  const nextIndex = nextLocalQueueIndex(queue.current_index, queue.items.length, shuffleEnabled, repeatMode);
+  const nextItem = nextIndex !== null ? queue.items[nextIndex] : null;
+  if (nextItem && nextItem.webpage_url) {
+    prefetchStreamUrl(nextItem.webpage_url);
+  }
 }
 
 async function seekTo(targetSeconds) {

@@ -881,6 +881,27 @@ function handle_stream_redirect(string $url, int $height = 0): void
     header('Location: ' . $streamUrl, true, 302);
 }
 
+// Fire-and-forget: warms the direct-stream cache for a track a few
+// seconds before it's actually needed (see app.js's
+// maybePrefetchNextStream), so the real stream_redirect at track-change
+// time is a cache hit instead of a multi-second yt-dlp resolve. Skips
+// silently if yt-dlp is already at capacity — losing this one prefetch
+// just means the switch falls back to resolving on demand, same as
+// today, rather than piling up another process.
+function handle_prefetch_stream_url(string $url): void
+{
+    if (!is_youtube_url($url)) {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'message' => 'not a valid YouTube URL']);
+        return;
+    }
+    if (get_cached_stream_url($url) === null && running_ytdlp_count() < MAX_CONCURRENT_YTDLP) {
+        $resolved = resolve_all_stream_variants($url);
+        cache_resolved_stream_variants($url, $resolved['audio'], $resolved['progressive']);
+    }
+    echo json_encode(['status' => 'ok']);
+}
+
 // Powers the quality-picker modal (status-badge click): resolves (or
 // reuses the cache) and reports every progressive video quality actually
 // available for this video, so the frontend can offer exactly those —
@@ -1911,6 +1932,8 @@ if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
         handle_resolve_mix_playlist((string) ($_POST['url'] ?? ''));
     } elseif ($action === 'list_video_qualities') {
         handle_list_video_qualities((string) ($_POST['url'] ?? ''));
+    } elseif ($action === 'prefetch_stream_url') {
+        handle_prefetch_stream_url((string) ($_POST['url'] ?? ''));
     } elseif ($action === 'owntone_player') {
         handle_owntone_player();
     } elseif ($action === 'owntone_queue') {
