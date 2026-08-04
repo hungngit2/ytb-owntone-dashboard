@@ -995,51 +995,73 @@ async function deletePlaylist(name) {
   }
 }
 
+let playlistModalItem = null;
+let playlistModalTriggerBtn = null;
+
 function closePlaylistModal() {
   document.getElementById('playlist-modal-overlay').hidden = true;
+  playlistModalItem = null;
+  playlistModalTriggerBtn = null;
 }
 
-// Search results' save-btn opens this: a dropdown-style list of existing
-// playlists to add straight into, plus a "+ Create" row for a brand new
-// one — replaces the old window.prompt (which made you retype an
-// existing name from memory to avoid accidentally creating a duplicate).
+// Search results' save-btn opens this: a searchable combobox over
+// existing playlists (type to filter) that also offers "+ Create" for
+// whatever you typed the moment it doesn't exactly match an existing
+// name — so adding to an existing playlist and creating a new one are
+// the same single action instead of two separate UIs to choose between.
 function openPlaylistModal(item, triggerBtn) {
+  playlistModalItem = item;
+  playlistModalTriggerBtn = triggerBtn;
+
+  const searchInput = document.getElementById('playlist-modal-search');
+  searchInput.value = '';
+  renderPlaylistModalOptions('');
+
+  document.getElementById('playlist-modal-overlay').hidden = false;
+  searchInput.focus();
+}
+
+function renderPlaylistModalOptions(query) {
   const body = document.getElementById('playlist-modal-body');
   body.innerHTML = '';
 
-  if (playlists.length === 0) {
+  const trimmedQuery = query.trim();
+  const normalizedQuery = trimmedQuery.toLowerCase();
+  const matches = playlists.filter((playlist) => playlist.name.toLowerCase().includes(normalizedQuery));
+
+  matches.forEach((playlist) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'modal-option';
+    btn.textContent = `${playlist.name} (${playlist.items.length})`;
+    btn.addEventListener('click', () => {
+      const item = playlistModalItem;
+      const triggerBtn = playlistModalTriggerBtn;
+      closePlaylistModal();
+      saveToPlaylist(playlist.name, item, triggerBtn);
+    });
+    body.appendChild(btn);
+  });
+
+  const exactMatch = playlists.some((playlist) => playlist.name.toLowerCase() === normalizedQuery);
+  if (trimmedQuery && !exactMatch) {
+    const createBtn = document.createElement('button');
+    createBtn.type = 'button';
+    createBtn.className = 'modal-option modal-option-create';
+    createBtn.textContent = `+ Create "${trimmedQuery}"`;
+    createBtn.addEventListener('click', () => {
+      const item = playlistModalItem;
+      const triggerBtn = playlistModalTriggerBtn;
+      closePlaylistModal();
+      saveToPlaylist(trimmedQuery, item, triggerBtn);
+    });
+    body.appendChild(createBtn);
+  } else if (matches.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'modal-empty';
-    empty.textContent = 'No playlists yet — create one below.';
+    empty.textContent = 'No playlists yet — type a name above to create one.';
     body.appendChild(empty);
-  } else {
-    playlists.forEach((playlist) => {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'modal-option';
-      btn.textContent = `${playlist.name} (${playlist.items.length})`;
-      btn.addEventListener('click', () => {
-        closePlaylistModal();
-        saveToPlaylist(playlist.name, item, triggerBtn);
-      });
-      body.appendChild(btn);
-    });
   }
-
-  const newNameInput = document.getElementById('playlist-modal-new-name');
-  newNameInput.value = '';
-
-  const createBtn = document.getElementById('playlist-modal-create-btn');
-  createBtn.onclick = () => {
-    const name = newNameInput.value.trim();
-    if (!name) {
-      return;
-    }
-    closePlaylistModal();
-    saveToPlaylist(name, item, triggerBtn);
-  };
-
-  document.getElementById('playlist-modal-overlay').hidden = false;
 }
 
 async function saveToPlaylist(name, item, triggerBtn) {
@@ -2252,6 +2274,23 @@ if (typeof document !== 'undefined') {
     if (event.target.id === 'playlist-modal-overlay') {
       closePlaylistModal();
     }
+  });
+  document.getElementById('playlist-modal-search').addEventListener('input', (event) => {
+    renderPlaylistModalOptions(event.target.value);
+  });
+  document.getElementById('playlist-modal-search').addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') {
+      return;
+    }
+    const trimmedQuery = event.target.value.trim();
+    if (!trimmedQuery) {
+      return;
+    }
+    const exact = playlists.find((playlist) => playlist.name.toLowerCase() === trimmedQuery.toLowerCase());
+    const item = playlistModalItem;
+    const triggerBtn = playlistModalTriggerBtn;
+    closePlaylistModal();
+    saveToPlaylist(exact ? exact.name : trimmedQuery, item, triggerBtn);
   });
 
   document.getElementById('playlist-actions-modal-close').addEventListener('click', closePlaylistActionsModal);

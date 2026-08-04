@@ -119,11 +119,10 @@ enforce_dashboard_auth();
           <span>Add to Playlist</span>
           <button type="button" id="playlist-modal-close" aria-label="Close">&times;</button>
         </div>
-        <div id="playlist-modal-body"></div>
-        <div id="playlist-modal-new-row">
-          <input id="playlist-modal-new-name" type="text" placeholder="New playlist name...">
-          <button type="button" id="playlist-modal-create-btn">+ Create</button>
+        <div id="playlist-modal-search-row">
+          <input id="playlist-modal-search" type="text" placeholder="Search or create a playlist...">
         </div>
+        <div id="playlist-modal-body"></div>
       </div>
     </div>
 
