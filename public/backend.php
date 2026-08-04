@@ -650,6 +650,18 @@ function queue_should_advance(
     return $nearEndByDuration || $nearEndByPipelineExit || $wentIdleAfterConfirmedPlaying;
 }
 
+// Pure: powers "Play Next" — inserts $item immediately after $afterIndex
+// without disturbing the rest of the queue. Clamped so it still works
+// with an empty queue or a stale/negative afterIndex (nothing currently
+// playing yet). Note this doesn't override shuffle mode's own random
+// pick — it only guarantees "next" for sequential playback.
+function insert_item_after(array $items, int $afterIndex, array $item): array
+{
+    $insertAt = max(0, min($afterIndex + 1, count($items)));
+    array_splice($items, $insertAt, 0, [$item]);
+    return $items;
+}
+
 // Pure: which index plays next. Sequential mode stops at the end (returns
 // null). Shuffle mode picks any other index and never runs out — $randomPicker
 // is injectable so tests can verify the "never repeat the current index"
@@ -1825,6 +1837,37 @@ function handle_set_auto_advance(bool $autoAdvance): void
     echo json_encode(['status' => 'ok']);
 }
 
+// "Play Next": inserts $item right after the currently-playing index,
+// leaving current_index and the rest of the queue untouched. Shares the
+// playback lock with handle_play_queue/advance_queue_if_finished since
+// all three read-modify-write the same queue state file.
+function handle_queue_play_next(array $item): void
+{
+    $url = $item['webpage_url'] ?? '';
+    if (!is_youtube_url($url)) {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'message' => 'invalid url']);
+        return;
+    }
+
+    $entry = [
+        'webpage_url' => $url,
+        'title' => $item['title'] ?? '',
+        'thumbnail' => $item['thumbnail'] ?? '',
+        'duration_string' => $item['duration_string'] ?? '',
+        'channel' => $item['channel'] ?? '',
+    ];
+
+    $result = with_playback_lock(function () use ($entry) {
+        $state = load_queue_state();
+        $items = insert_item_after($state['items'], $state['current_index'], $entry);
+        save_queue_state($items, $state['current_index'], $state['shuffle'], $state['repeat'], QUEUE_STATE_FILE, $state['auto_advance']);
+        return ['items' => $items];
+    });
+
+    echo json_encode(['status' => 'ok', 'items' => $result['items'] ?? []]);
+}
+
 // Reports whether the currently-playing track is fully cached yet — the
 // frontend uses this to decide whether the progress bar accepts a drag.
 function handle_queue_state(): void
@@ -1940,6 +1983,9 @@ if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
         handle_set_repeat((string) ($_POST['repeat'] ?? 'off'));
     } elseif ($action === 'set_auto_advance') {
         handle_set_auto_advance((bool) ($_POST['auto_advance'] ?? false));
+    } elseif ($action === 'queue_play_next') {
+        $item = json_decode((string) ($_POST['item'] ?? '{}'), true);
+        handle_queue_play_next(is_array($item) ? $item : []);
     } elseif ($action === 'stop') {
         handle_stop();
     } elseif ($action === 'seek') {

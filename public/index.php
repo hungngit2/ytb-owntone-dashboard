@@ -91,7 +91,7 @@ enforce_dashboard_auth();
     </div>
 
     <div id="view-tabs">
-      <button id="tab-search" type="button" class="view-tab active">Search</button>
+      <button id="tab-search" type="button" class="view-tab active">Queue</button>
       <button id="tab-playlist" type="button" class="view-tab">Playlist</button>
     </div>
 

@@ -9,6 +9,7 @@ const {
   mapPlayerResponse,
   mapQueueResponse,
   sanitizeVolume,
+  insertAfterIndex,
 } = require('../public/app.js');
 
 assert.strictEqual(isYoutubeUrl('https://www.youtube.com/watch?v=abc123'), true, 'accepts watch url');
@@ -106,5 +107,11 @@ assert.strictEqual(isIOS('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 'Mac
 assert.strictEqual(isIOS('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 'MacIntel', 0), false, 'a real Mac (no touch points) is not iOS');
 assert.strictEqual(isIOS('Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Win32', 0), false, 'a Windows user agent is not iOS');
 assert.strictEqual(isIOS('Mozilla/5.0 (Linux; Android 13)', 'Linux armv8l', 5), false, 'an Android user agent (also touch-capable) is not iOS');
+
+assert.deepStrictEqual(insertAfterIndex(['a', 'b', 'c'], 0, 'X'), ['a', 'X', 'b', 'c'], 'insertAfterIndex inserts right after the given index');
+assert.deepStrictEqual(insertAfterIndex(['a', 'b', 'c'], 2, 'X'), ['a', 'b', 'c', 'X'], 'insertAfterIndex appends when afterIndex is the last item');
+assert.deepStrictEqual(insertAfterIndex([], -1, 'X'), ['X'], 'insertAfterIndex inserts at the front of an empty queue (nothing currently playing)');
+assert.deepStrictEqual(insertAfterIndex(['a', 'b'], -1, 'X'), ['X', 'a', 'b'], 'insertAfterIndex clamps a negative afterIndex to the front');
+assert.deepStrictEqual(insertAfterIndex(['a', 'b'], 99, 'X'), ['a', 'b', 'X'], 'insertAfterIndex clamps an out-of-range afterIndex to the end');
 
 console.log('All app.js helper tests passed.');

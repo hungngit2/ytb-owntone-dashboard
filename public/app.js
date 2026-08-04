@@ -18,6 +18,10 @@ const ICONS = {
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
   moreVertical:
     '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>',
+  playNext:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6v12l8-6z" fill="currentColor" stroke="none"/><line x1="16" y1="6" x2="16" y2="12"/><line x1="13" y1="9" x2="19" y2="9"/></svg>',
+  check:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
 };
 
 // iOS Safari silently ignores HTMLMediaElement.volume — it's a WebKit
@@ -123,6 +127,7 @@ if (typeof module !== 'undefined' && module.exports) {
     mapPlayerResponse,
     mapQueueResponse,
     sanitizeVolume,
+    insertAfterIndex,
     clearSearchResults,
     getSearchResults: () => searchResults,
   };
@@ -401,6 +406,16 @@ function renderResults() {
     playBtn.disabled = playRequestInFlight;
     playBtn.addEventListener('click', () => playQueueItem(items, index, playBtn));
     actions.appendChild(playBtn);
+
+    // Available from both Search and Playlist rows — inserts this track
+    // right after whatever's currently playing, without touching the
+    // rest of the queue (unlike Play, which replaces the whole queue).
+    const playNextBtn = document.createElement('button');
+    playNextBtn.className = 'save-btn';
+    playNextBtn.innerHTML = ICONS.playNext;
+    playNextBtn.title = 'Play next';
+    playNextBtn.addEventListener('click', () => playNext(item, playNextBtn));
+    actions.appendChild(playNextBtn);
 
     if (currentView === 'search') {
       const saveBtn = document.createElement('button');
@@ -696,6 +711,71 @@ function playAll() {
   const items = activeItems();
   if (items.length > 0) {
     playQueueItem(items, 0);
+  }
+}
+
+// Pure so it's testable without a DOM/queue global — clamps so it still
+// works with an empty queue or a stale/negative afterIndex (nothing
+// currently playing).
+function insertAfterIndex(items, afterIndex, item) {
+  const insertAt = Math.max(0, Math.min(afterIndex + 1, items.length));
+  return [...items.slice(0, insertAt), item, ...items.slice(insertAt)];
+}
+
+function toPlaylistEntry(item) {
+  return {
+    webpage_url: item.webpage_url || '',
+    title: item.title || '',
+    thumbnail: item.thumbnail || '',
+    duration_string: item.duration_string || '',
+    channel: item.channel || '',
+  };
+}
+
+async function playNext(item, triggerBtn) {
+  if (triggerBtn) {
+    triggerBtn.disabled = true;
+  }
+
+  const flashSuccess = () => {
+    if (!triggerBtn) {
+      return;
+    }
+    triggerBtn.innerHTML = ICONS.check;
+    setTimeout(() => {
+      triggerBtn.innerHTML = ICONS.playNext;
+    }, 1200);
+  };
+
+  if (isLocalMode()) {
+    localQueue.items = insertAfterIndex(localQueue.items, localQueue.current_index, toPlaylistEntry(item));
+    saveLocalQueue();
+    flashSuccess();
+    if (triggerBtn) {
+      triggerBtn.disabled = false;
+    }
+    return;
+  }
+
+  try {
+    const res = await fetch('backend.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `action=queue_play_next&item=${encodeURIComponent(JSON.stringify(toPlaylistEntry(item)))}`,
+    });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      serverQueue.items = data.items;
+      flashSuccess();
+    } else {
+      showError(data.message || 'Play Next failed');
+    }
+  } catch (err) {
+    showError('Play Next request failed');
+  } finally {
+    if (triggerBtn) {
+      triggerBtn.disabled = false;
+    }
   }
 }
 
@@ -1077,13 +1157,7 @@ async function saveToPlaylist(name, item, triggerBtn) {
         playlists.push(playlist);
       }
       if (!playlist.items.some((entry) => extractYoutubeVideoId(entry.webpage_url) === extractYoutubeVideoId(item.webpage_url))) {
-        playlist.items.push({
-          webpage_url: item.webpage_url || '',
-          title: item.title || '',
-          thumbnail: item.thumbnail || '',
-          duration_string: item.duration_string || '',
-          channel: item.channel || '',
-        });
+        playlist.items.push(toPlaylistEntry(item));
       }
       currentPlaylistName = name;
       saveLocalPlaylists();

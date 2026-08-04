@@ -459,4 +459,19 @@ assert_true(next_queue_index(2, 3, false, 'all') === 0, 'next_queue_index (repea
 assert_true(next_queue_index(1, 3, false, 'all') === 2, 'next_queue_index (repeat-all, sequential) still just moves forward before the end');
 assert_true(next_queue_index(0, 1, true, 'all') === 0, 'next_queue_index (repeat-all, shuffle) wraps to the only item rather than returning null');
 
+$inserted = insert_item_after([['title' => 'a'], ['title' => 'b'], ['title' => 'c']], 0, ['title' => 'X']);
+assert_true(array_column($inserted, 'title') === ['a', 'X', 'b', 'c'], 'insert_item_after inserts right after the given index');
+
+$insertedAtEnd = insert_item_after([['title' => 'a'], ['title' => 'b']], 1, ['title' => 'X']);
+assert_true(array_column($insertedAtEnd, 'title') === ['a', 'b', 'X'], 'insert_item_after appends when afterIndex is the last item');
+
+$insertedEmpty = insert_item_after([], -1, ['title' => 'X']);
+assert_true(array_column($insertedEmpty, 'title') === ['X'], 'insert_item_after inserts into an empty queue (nothing currently playing)');
+
+$insertedClampedLow = insert_item_after([['title' => 'a'], ['title' => 'b']], -1, ['title' => 'X']);
+assert_true(array_column($insertedClampedLow, 'title') === ['X', 'a', 'b'], 'insert_item_after clamps a negative afterIndex to the front');
+
+$insertedClampedHigh = insert_item_after([['title' => 'a'], ['title' => 'b']], 99, ['title' => 'X']);
+assert_true(array_column($insertedClampedHigh, 'title') === ['a', 'b', 'X'], 'insert_item_after clamps an out-of-range afterIndex to the end');
+
 echo "All backend helper tests passed.\n";
