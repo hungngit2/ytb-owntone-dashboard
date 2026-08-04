@@ -403,7 +403,7 @@ function renderResults() {
       saveBtn.className = 'save-btn';
       saveBtn.innerHTML = ICONS.star;
       saveBtn.title = 'Save to playlist';
-      saveBtn.addEventListener('click', () => saveToPlaylist(item, saveBtn));
+      saveBtn.addEventListener('click', () => openPlaylistModal(item, saveBtn));
       actions.appendChild(saveBtn);
     } else {
       const removeBtn = document.createElement('button');
@@ -768,22 +768,54 @@ function renderPlaylistSelector() {
   });
 }
 
-function promptForPlaylistName() {
-  const existingNames = playlists.map((p) => p.name).join(', ');
-  const message =
-    playlists.length > 0
-      ? `Save to which playlist? (existing: ${existingNames})\nEnter a different name to create a new one.`
-      : 'New playlist name:';
-  const suggestion = currentPlaylistName || (playlists[0] && playlists[0].name) || 'Favorites';
-  return (window.prompt(message, suggestion) || '').trim();
+function closePlaylistModal() {
+  document.getElementById('playlist-modal-overlay').hidden = true;
 }
 
-async function saveToPlaylist(item, triggerBtn) {
-  const name = promptForPlaylistName();
-  if (!name) {
-    return;
+// Search results' save-btn opens this: a dropdown-style list of existing
+// playlists to add straight into, plus a "+ Create" row for a brand new
+// one — replaces the old window.prompt (which made you retype an
+// existing name from memory to avoid accidentally creating a duplicate).
+function openPlaylistModal(item, triggerBtn) {
+  const body = document.getElementById('playlist-modal-body');
+  body.innerHTML = '';
+
+  if (playlists.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'modal-empty';
+    empty.textContent = 'No playlists yet — create one below.';
+    body.appendChild(empty);
+  } else {
+    playlists.forEach((playlist) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'modal-option';
+      btn.textContent = `${playlist.name} (${playlist.items.length})`;
+      btn.addEventListener('click', () => {
+        closePlaylistModal();
+        saveToPlaylist(playlist.name, item, triggerBtn);
+      });
+      body.appendChild(btn);
+    });
   }
 
+  const newNameInput = document.getElementById('playlist-modal-new-name');
+  newNameInput.value = '';
+
+  const createBtn = document.getElementById('playlist-modal-create-btn');
+  createBtn.onclick = () => {
+    const name = newNameInput.value.trim();
+    if (!name) {
+      return;
+    }
+    closePlaylistModal();
+    saveToPlaylist(name, item, triggerBtn);
+  };
+
+  document.getElementById('playlist-modal-overlay').hidden = false;
+}
+
+async function saveToPlaylist(name, item, triggerBtn) {
   if (triggerBtn) {
     triggerBtn.disabled = true;
   }
@@ -1988,7 +2020,7 @@ if (typeof document !== 'undefined') {
     }
 
     const body = document.getElementById('quality-modal-body');
-    body.innerHTML = '<div class="quality-modal-empty">Loading available qualities…</div>';
+    body.innerHTML = '<div class="modal-empty">Loading available qualities…</div>';
     document.getElementById('quality-modal-overlay').hidden = false;
 
     let qualities = [];
@@ -2007,14 +2039,14 @@ if (typeof document !== 'undefined') {
     body.innerHTML = '';
     const audioBtn = document.createElement('button');
     audioBtn.type = 'button';
-    audioBtn.className = 'quality-modal-option';
+    audioBtn.className = 'modal-option';
     audioBtn.textContent = 'Audio only';
     audioBtn.addEventListener('click', () => openStreamVariant(webpageUrl, 0));
     body.appendChild(audioBtn);
 
     if (qualities.length === 0) {
       const empty = document.createElement('div');
-      empty.className = 'quality-modal-empty';
+      empty.className = 'modal-empty';
       empty.textContent = 'No direct video link available for this track (only its audio-only rendition resolved).';
       body.appendChild(empty);
       return;
@@ -2023,7 +2055,7 @@ if (typeof document !== 'undefined') {
     qualities.forEach((quality) => {
       const btn = document.createElement('button');
       btn.type = 'button';
-      btn.className = 'quality-modal-option';
+      btn.className = 'modal-option';
       btn.textContent = `Video — ${quality.label}`;
       btn.addEventListener('click', () => openStreamVariant(webpageUrl, quality.height));
       body.appendChild(btn);
@@ -2034,6 +2066,13 @@ if (typeof document !== 'undefined') {
   document.getElementById('quality-modal-overlay').addEventListener('click', (event) => {
     if (event.target.id === 'quality-modal-overlay') {
       closeQualityModal();
+    }
+  });
+
+  document.getElementById('playlist-modal-close').addEventListener('click', closePlaylistModal);
+  document.getElementById('playlist-modal-overlay').addEventListener('click', (event) => {
+    if (event.target.id === 'playlist-modal-overlay') {
+      closePlaylistModal();
     }
   });
 

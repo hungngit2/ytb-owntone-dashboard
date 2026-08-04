@@ -117,6 +117,20 @@ enforce_dashboard_auth();
         <div id="quality-modal-body"></div>
       </div>
     </div>
+
+    <div id="playlist-modal-overlay" hidden>
+      <div id="playlist-modal">
+        <div id="playlist-modal-header">
+          <span>Add to Playlist</span>
+          <button type="button" id="playlist-modal-close" aria-label="Close">&times;</button>
+        </div>
+        <div id="playlist-modal-body"></div>
+        <div id="playlist-modal-new-row">
+          <input id="playlist-modal-new-name" type="text" placeholder="New playlist name...">
+          <button type="button" id="playlist-modal-create-btn">+ Create</button>
+        </div>
+      </div>
+    </div>
   </main>
 
   <script src="config.js"></script>
