@@ -758,21 +758,6 @@ body {
   background: rgba(99, 102, 241, 0.15);
 }
 
-#play-all-btn {
-  background: var(--accent);
-  border: none;
-  color: #fff;
-  font-weight: 700;
-  padding: 8px 14px;
-  border-radius: 8px;
-  cursor: pointer;
-  font-size: 12px;
-}
-
-#play-all-btn svg {
-  margin-right: 4px;
-}
-
 /* ---- Results ---- */
 
 #results-container {
@@ -1230,4 +1215,70 @@ body {
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
+}
+
+/* ---- Playlist-actions modal (playlist pill click) ---- */
+
+#playlist-actions-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+#playlist-actions-modal-overlay[hidden] {
+  display: none;
+}
+
+#playlist-actions-modal {
+  width: 100%;
+  max-width: 360px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+}
+
+#playlist-actions-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 700;
+  font-size: 14px;
+}
+
+#playlist-actions-modal-close {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px;
+}
+
+#playlist-actions-modal-close:hover {
+  color: var(--text);
+}
+
+#playlist-actions-modal-body {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.modal-option-danger {
+  color: #f87171;
+}
+
+.modal-option-danger:hover {
+  background: rgba(248, 113, 113, 0.2);
+  border-color: rgba(248, 113, 113, 0.5);
 }

@@ -763,9 +763,104 @@ function renderPlaylistSelector() {
       currentPlaylistName = playlist.name;
       renderPlaylistSelector();
       renderResults();
+      openPlaylistActionsModal(playlist.name);
     });
     selector.appendChild(btn);
   });
+}
+
+let playlistActionsTargetName = null;
+
+function closePlaylistActionsModal() {
+  document.getElementById('playlist-actions-modal-overlay').hidden = true;
+  playlistActionsTargetName = null;
+}
+
+function openPlaylistActionsModal(name) {
+  playlistActionsTargetName = name;
+  document.getElementById('playlist-actions-modal-title').textContent = name;
+  document.getElementById('playlist-actions-modal-overlay').hidden = false;
+}
+
+async function renamePlaylist(oldName, newName) {
+  if (!newName || newName === oldName) {
+    return;
+  }
+  if (playlists.some((p) => p.name === newName)) {
+    showError('A playlist with that name already exists');
+    return;
+  }
+
+  if (isLocalMode()) {
+    const playlist = playlists.find((p) => p.name === oldName);
+    if (playlist) {
+      playlist.name = newName;
+    }
+    if (currentPlaylistName === oldName) {
+      currentPlaylistName = newName;
+    }
+    saveLocalPlaylists();
+    renderPlaylistSelector();
+    renderResults();
+    return;
+  }
+
+  try {
+    const res = await fetch('backend.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `action=playlist_rename&old_name=${encodeURIComponent(oldName)}&new_name=${encodeURIComponent(newName)}`,
+    });
+    const data = await res.json();
+
+    if (data.status === 'ok') {
+      playlists = data.playlists;
+      if (currentPlaylistName === oldName) {
+        currentPlaylistName = newName;
+      }
+      renderPlaylistSelector();
+      renderResults();
+    } else {
+      showError(data.message || 'Rename failed');
+    }
+  } catch (err) {
+    showError('Rename request failed');
+  }
+}
+
+async function deletePlaylist(name) {
+  if (isLocalMode()) {
+    playlists = playlists.filter((p) => p.name !== name);
+    if (currentPlaylistName === name) {
+      currentPlaylistName = playlists[0] ? playlists[0].name : null;
+    }
+    saveLocalPlaylists();
+    renderPlaylistSelector();
+    renderResults();
+    return;
+  }
+
+  try {
+    const res = await fetch('backend.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `action=playlist_delete&name=${encodeURIComponent(name)}`,
+    });
+    const data = await res.json();
+
+    if (data.status === 'ok') {
+      playlists = data.playlists;
+      if (currentPlaylistName === name) {
+        currentPlaylistName = playlists[0] ? playlists[0].name : null;
+      }
+      renderPlaylistSelector();
+      renderResults();
+    } else {
+      showError(data.message || 'Delete failed');
+    }
+  } catch (err) {
+    showError('Delete request failed');
+  }
 }
 
 function closePlaylistModal() {
@@ -1771,8 +1866,6 @@ if (typeof document !== 'undefined') {
   document.getElementById('tab-search').addEventListener('click', () => switchView('search'));
   document.getElementById('tab-playlist').addEventListener('click', () => switchView('playlist'));
 
-  document.getElementById('play-all-btn').addEventListener('click', playAll);
-
   document.getElementById('shuffle-btn').addEventListener('click', () => {
     shuffleEnabled = !shuffleEnabled;
     document.getElementById('shuffle-btn').classList.toggle('active', shuffleEnabled);
@@ -2026,6 +2119,41 @@ if (typeof document !== 'undefined') {
   document.getElementById('playlist-modal-overlay').addEventListener('click', (event) => {
     if (event.target.id === 'playlist-modal-overlay') {
       closePlaylistModal();
+    }
+  });
+
+  document.getElementById('playlist-actions-play-btn').addEventListener('click', () => {
+    if (!playlistActionsTargetName) {
+      return;
+    }
+    closePlaylistActionsModal();
+    playAll();
+  });
+  document.getElementById('playlist-actions-rename-btn').addEventListener('click', () => {
+    const oldName = playlistActionsTargetName;
+    if (!oldName) {
+      return;
+    }
+    const newName = (window.prompt('Rename playlist', oldName) || '').trim();
+    closePlaylistActionsModal();
+    if (newName) {
+      renamePlaylist(oldName, newName);
+    }
+  });
+  document.getElementById('playlist-actions-delete-btn').addEventListener('click', () => {
+    const name = playlistActionsTargetName;
+    if (!name) {
+      return;
+    }
+    closePlaylistActionsModal();
+    if (window.confirm(`Delete playlist "${name}"? This cannot be undone.`)) {
+      deletePlaylist(name);
+    }
+  });
+  document.getElementById('playlist-actions-modal-close').addEventListener('click', closePlaylistActionsModal);
+  document.getElementById('playlist-actions-modal-overlay').addEventListener('click', (event) => {
+    if (event.target.id === 'playlist-actions-modal-overlay') {
+      closePlaylistActionsModal();
     }
   });
 

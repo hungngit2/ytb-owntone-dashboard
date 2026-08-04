@@ -410,6 +410,29 @@ function remove_item_from_named_playlist(array $playlists, string $name, string 
     return $playlists;
 }
 
+// Refuses to rename onto another existing playlist's name — that would
+// silently merge two lists together rather than actually renaming one.
+function rename_playlist(array $playlists, string $oldName, string $newName): array
+{
+    $index = find_playlist_index($playlists, $oldName);
+    if ($index === null) {
+        return $playlists;
+    }
+    if ($oldName !== $newName && find_playlist_index($playlists, $newName) !== null) {
+        return $playlists;
+    }
+
+    $playlists[$index]['name'] = $newName;
+    return $playlists;
+}
+
+function delete_playlist(array $playlists, string $name): array
+{
+    return array_values(array_filter($playlists, function ($playlist) use ($name) {
+        return ($playlist['name'] ?? null) !== $name;
+    }));
+}
+
 function read_json_file(string $path): array
 {
     if (!file_exists($path)) {
@@ -698,6 +721,44 @@ function handle_playlist_add_item(string $name, array $item): void
 function handle_playlist_remove_item(string $name, string $url): void
 {
     $playlists = remove_item_from_named_playlist(load_playlist(), $name, $url);
+    save_playlist($playlists);
+
+    echo json_encode(['status' => 'ok', 'playlists' => $playlists]);
+}
+
+function handle_playlist_rename(string $oldName, string $newName): void
+{
+    $oldName = trim($oldName);
+    $newName = trim($newName);
+    if ($oldName === '' || $newName === '') {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'message' => 'invalid playlist name']);
+        return;
+    }
+
+    $playlists = load_playlist();
+    if ($oldName !== $newName && find_playlist_index($playlists, $newName) !== null) {
+        http_response_code(409);
+        echo json_encode(['status' => 'error', 'message' => 'a playlist with that name already exists']);
+        return;
+    }
+
+    $playlists = rename_playlist($playlists, $oldName, $newName);
+    save_playlist($playlists);
+
+    echo json_encode(['status' => 'ok', 'playlists' => $playlists]);
+}
+
+function handle_playlist_delete(string $name): void
+{
+    $name = trim($name);
+    if ($name === '') {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'message' => 'playlist name required']);
+        return;
+    }
+
+    $playlists = delete_playlist(load_playlist(), $name);
     save_playlist($playlists);
 
     echo json_encode(['status' => 'ok', 'playlists' => $playlists]);
@@ -1897,6 +1958,10 @@ if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
         ]);
     } elseif ($action === 'playlist_remove_item') {
         handle_playlist_remove_item((string) ($_POST['name'] ?? ''), (string) ($_POST['webpage_url'] ?? ''));
+    } elseif ($action === 'playlist_rename') {
+        handle_playlist_rename((string) ($_POST['old_name'] ?? ''), (string) ($_POST['new_name'] ?? ''));
+    } elseif ($action === 'playlist_delete') {
+        handle_playlist_delete((string) ($_POST['name'] ?? ''));
     } elseif ($action === 'last_search') {
         handle_last_search();
     } elseif ($action === 'resolve_url') {

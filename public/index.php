@@ -97,7 +97,6 @@ enforce_dashboard_auth();
 
     <div id="playlist-controls" style="display: none;">
       <div id="playlist-selector"></div>
-      <button id="play-all-btn" type="button"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> Play All</button>
     </div>
 
     <div id="results-container">
@@ -124,6 +123,20 @@ enforce_dashboard_auth();
         <div id="playlist-modal-new-row">
           <input id="playlist-modal-new-name" type="text" placeholder="New playlist name...">
           <button type="button" id="playlist-modal-create-btn">+ Create</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="playlist-actions-modal-overlay" hidden>
+      <div id="playlist-actions-modal">
+        <div id="playlist-actions-modal-header">
+          <span id="playlist-actions-modal-title">Playlist</span>
+          <button type="button" id="playlist-actions-modal-close" aria-label="Close">&times;</button>
+        </div>
+        <div id="playlist-actions-modal-body">
+          <button type="button" id="playlist-actions-play-btn" class="modal-option">Play</button>
+          <button type="button" id="playlist-actions-rename-btn" class="modal-option">Rename</button>
+          <button type="button" id="playlist-actions-delete-btn" class="modal-option modal-option-danger">Delete</button>
         </div>
       </div>
     </div>

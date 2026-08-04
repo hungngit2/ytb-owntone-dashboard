@@ -177,6 +177,21 @@ assert_true(count($playlists[1]['items']) === 1, 'remove_item_from_named_playlis
 $unchanged = remove_item_from_named_playlist($playlists, 'Nonexistent', 'https://youtu.be/xxx');
 assert_true($unchanged === $playlists, 'remove_item_from_named_playlist is a no-op for a nonexistent playlist name');
 
+$renamed = rename_playlist($playlists, 'Workout', 'Gym');
+assert_true(find_playlist_index($renamed, 'Gym') !== null && find_playlist_index($renamed, 'Workout') === null, 'rename_playlist renames the matching playlist');
+
+$unchangedRename = rename_playlist($playlists, 'Nonexistent', 'Whatever');
+assert_true($unchangedRename === $playlists, 'rename_playlist is a no-op for a nonexistent playlist name');
+
+$collisionRename = rename_playlist($playlists, 'Workout', 'Yêu thích');
+assert_true($collisionRename === $playlists, 'rename_playlist refuses to rename onto an existing different playlist name');
+
+$deleted = delete_playlist($playlists, 'Workout');
+assert_true(count($deleted) === 1 && find_playlist_index($deleted, 'Yêu thích') !== null, 'delete_playlist removes the matching playlist and leaves others');
+
+$unchangedDelete = delete_playlist($playlists, 'Nonexistent');
+assert_true(count($unchangedDelete) === count($playlists), 'delete_playlist is a no-op for a nonexistent playlist name');
+
 $tmpSearchFile = sys_get_temp_dir() . '/last_search_test_' . uniqid() . '/last_search.json';
 assert_true(load_last_search($tmpSearchFile) === [], 'load_last_search returns empty array when file does not exist');
 
