@@ -948,15 +948,16 @@ body {
 }
 
 .play-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: var(--accent-play);
   border: none;
   color: #fff;
-  font-weight: 700;
-  font-size: 11px;
-  padding: 8px 14px;
+  font-size: 15px;
+  padding: 8px 12px;
   border-radius: 6px;
   cursor: pointer;
-  white-space: nowrap;
   flex-shrink: 0;
 }
 
@@ -967,6 +968,16 @@ body {
 .play-btn:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* Overrides .spinner's default size/colors to fit inside the small icon
+   button and stay visible against the red fill. */
+.play-btn .spinner {
+  width: 14px;
+  height: 14px;
+  border-width: 2px;
+  border-color: rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
 }
 
 .save-btn {

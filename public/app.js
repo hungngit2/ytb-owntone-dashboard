@@ -402,7 +402,9 @@ function renderResults() {
 
     const playBtn = document.createElement('button');
     playBtn.className = 'play-btn';
-    playBtn.textContent = 'Play';
+    playBtn.innerHTML = ICONS.play;
+    playBtn.title = 'Play';
+    playBtn.setAttribute('aria-label', 'Play');
     playBtn.disabled = playRequestInFlight;
     playBtn.addEventListener('click', () => playQueueItem(items, index, playBtn));
     actions.appendChild(playBtn);
@@ -414,6 +416,7 @@ function renderResults() {
     playNextBtn.className = 'save-btn';
     playNextBtn.innerHTML = ICONS.playNext;
     playNextBtn.title = 'Play next';
+    playNextBtn.setAttribute('aria-label', 'Play next');
     playNextBtn.addEventListener('click', () => playNext(item, playNextBtn));
     actions.appendChild(playNextBtn);
 
@@ -422,6 +425,7 @@ function renderResults() {
       saveBtn.className = 'save-btn';
       saveBtn.innerHTML = ICONS.star;
       saveBtn.title = 'Save to playlist';
+      saveBtn.setAttribute('aria-label', 'Save to playlist');
       saveBtn.addEventListener('click', () => openPlaylistModal(item, saveBtn));
       actions.appendChild(saveBtn);
     } else {
@@ -429,6 +433,7 @@ function renderResults() {
       removeBtn.className = 'save-btn';
       removeBtn.innerHTML = ICONS.trash;
       removeBtn.title = 'Remove from playlist';
+      removeBtn.setAttribute('aria-label', 'Remove from playlist');
       removeBtn.addEventListener('click', () => removeFromPlaylist(item.webpage_url, removeBtn));
       actions.appendChild(removeBtn);
     }
@@ -1577,7 +1582,7 @@ async function playLocalQueueItem(items, index, triggerBtn) {
     btn.disabled = true;
   });
   if (triggerBtn) {
-    triggerBtn.textContent = '...';
+    triggerBtn.innerHTML = '<span class="spinner"></span>';
   }
 
   const titleEl = document.getElementById('now-title');
@@ -1624,7 +1629,7 @@ async function playLocalQueueItem(items, index, triggerBtn) {
       btn.disabled = false;
     });
     if (triggerBtn) {
-      triggerBtn.textContent = 'Play';
+      triggerBtn.innerHTML = ICONS.play;
     }
   }
 }
@@ -1670,7 +1675,7 @@ async function playQueueItem(items, index, triggerBtn) {
     btn.disabled = true;
   });
   if (triggerBtn) {
-    triggerBtn.textContent = '...';
+    triggerBtn.innerHTML = '<span class="spinner"></span>';
   }
 
   const titleEl = document.getElementById('now-title');
@@ -1723,7 +1728,7 @@ async function playQueueItem(items, index, triggerBtn) {
       btn.disabled = false;
     });
     if (triggerBtn) {
-      triggerBtn.textContent = 'Play';
+      triggerBtn.innerHTML = ICONS.play;
     }
   }
 }
