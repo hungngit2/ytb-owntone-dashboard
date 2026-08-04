@@ -741,21 +741,53 @@ body {
 }
 
 .playlist-pill {
+  display: inline-flex;
+  align-items: center;
   background: var(--surface-alt);
   border: 1px solid var(--border);
-  color: var(--text-dim);
-  font-size: 12px;
-  font-weight: 600;
-  padding: 6px 12px;
   border-radius: 999px;
-  cursor: pointer;
+  padding: 2px 4px 2px 0;
   white-space: nowrap;
 }
 
 .playlist-pill.active {
-  color: var(--text);
   border-color: var(--accent);
   background: rgba(99, 102, 241, 0.15);
+}
+
+.playlist-pill-label {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 6px 6px 12px;
+  cursor: pointer;
+}
+
+.playlist-pill.active .playlist-pill-label {
+  color: var(--text);
+}
+
+.playlist-pill-more {
+  display: flex;
+  align-items: center;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  padding: 5px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.playlist-pill-more svg {
+  width: 14px;
+  height: 14px;
+}
+
+.playlist-pill-more:hover {
+  background: rgba(148, 163, 184, 0.2);
+  color: var(--text);
 }
 
 /* ---- Results ---- */
@@ -1104,7 +1136,9 @@ body {
 }
 
 .modal-option {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   width: 100%;
   text-align: left;
   background: rgba(51, 65, 85, 0.4);
@@ -1115,6 +1149,12 @@ body {
   font-weight: 600;
   padding: 10px 12px;
   cursor: pointer;
+}
+
+.modal-option svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
 }
 
 .modal-option:hover {
@@ -1281,4 +1321,50 @@ body {
 .modal-option-danger:hover {
   background: rgba(248, 113, 113, 0.2);
   border-color: rgba(248, 113, 113, 0.5);
+}
+
+.modal-inline-input {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(30, 41, 59, 0.4);
+  color: var(--text);
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+
+.modal-confirm-text {
+  color: var(--text-dim);
+  font-size: 13px;
+  padding: 4px 4px 12px;
+}
+
+.modal-inline-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.modal-inline-btn {
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.modal-inline-btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.modal-inline-btn-danger {
+  background: #ef4444;
+  border-color: #ef4444;
+  color: #fff;
 }

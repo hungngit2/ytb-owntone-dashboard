@@ -14,6 +14,10 @@ const ICONS = {
     '<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>',
   trash:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>',
+  pencil:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
+  moreVertical:
+    '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>',
 };
 
 // iOS Safari silently ignores HTMLMediaElement.volume — it's a WebKit
@@ -754,18 +758,37 @@ function renderPlaylistSelector() {
   selector.innerHTML = '';
 
   playlists.forEach((playlist) => {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'playlist-pill';
-    btn.classList.toggle('active', playlist.name === currentPlaylistName);
-    btn.textContent = `${playlist.name} (${playlist.items.length})`;
-    btn.addEventListener('click', () => {
+    const pill = document.createElement('div');
+    pill.className = 'playlist-pill';
+    pill.classList.toggle('active', playlist.name === currentPlaylistName);
+
+    // A separate label button (selects/browses the playlist, the common
+    // case) and a "more" button (opens the play/rename/delete modal) —
+    // the modal used to open on every single click here, which made just
+    // switching which playlist you're browsing require an extra dismiss
+    // every time.
+    const label = document.createElement('button');
+    label.type = 'button';
+    label.className = 'playlist-pill-label';
+    label.textContent = `${playlist.name} (${playlist.items.length})`;
+    label.addEventListener('click', () => {
       currentPlaylistName = playlist.name;
       renderPlaylistSelector();
       renderResults();
+    });
+
+    const moreBtn = document.createElement('button');
+    moreBtn.type = 'button';
+    moreBtn.className = 'playlist-pill-more';
+    moreBtn.setAttribute('aria-label', 'Playlist options');
+    moreBtn.innerHTML = ICONS.moreVertical;
+    moreBtn.addEventListener('click', (event) => {
+      event.stopPropagation();
       openPlaylistActionsModal(playlist.name);
     });
-    selector.appendChild(btn);
+
+    pill.append(label, moreBtn);
+    selector.appendChild(pill);
   });
 }
 
@@ -779,7 +802,116 @@ function closePlaylistActionsModal() {
 function openPlaylistActionsModal(name) {
   playlistActionsTargetName = name;
   document.getElementById('playlist-actions-modal-title').textContent = name;
+  renderPlaylistActionsMenu();
   document.getElementById('playlist-actions-modal-overlay').hidden = false;
+}
+
+// The modal's default screen: Play/Rename/Delete. Rename and Delete swap
+// the body for an inline form/confirm (renderPlaylistActionsRename,
+// renderPlaylistActionsDeleteConfirm) instead of a native prompt()/
+// confirm() — those look jarringly out of place against the app's own
+// modal styling.
+function renderPlaylistActionsMenu() {
+  const body = document.getElementById('playlist-actions-modal-body');
+  body.innerHTML = '';
+
+  const playBtn = document.createElement('button');
+  playBtn.type = 'button';
+  playBtn.className = 'modal-option';
+  playBtn.innerHTML = `${ICONS.play} Play`;
+  playBtn.addEventListener('click', () => {
+    closePlaylistActionsModal();
+    playAll();
+  });
+
+  const renameBtn = document.createElement('button');
+  renameBtn.type = 'button';
+  renameBtn.className = 'modal-option';
+  renameBtn.innerHTML = `${ICONS.pencil} Rename`;
+  renameBtn.addEventListener('click', renderPlaylistActionsRename);
+
+  const deleteBtn = document.createElement('button');
+  deleteBtn.type = 'button';
+  deleteBtn.className = 'modal-option modal-option-danger';
+  deleteBtn.innerHTML = `${ICONS.trash} Delete`;
+  deleteBtn.addEventListener('click', renderPlaylistActionsDeleteConfirm);
+
+  body.append(playBtn, renameBtn, deleteBtn);
+}
+
+function renderPlaylistActionsRename() {
+  const oldName = playlistActionsTargetName;
+  const body = document.getElementById('playlist-actions-modal-body');
+  body.innerHTML = '';
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'modal-inline-input';
+  input.value = oldName;
+  body.appendChild(input);
+
+  const actions = document.createElement('div');
+  actions.className = 'modal-inline-actions';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.className = 'modal-inline-btn';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.addEventListener('click', renderPlaylistActionsMenu);
+
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'button';
+  saveBtn.className = 'modal-inline-btn modal-inline-btn-primary';
+  saveBtn.textContent = 'Save';
+  saveBtn.addEventListener('click', () => {
+    const newName = input.value.trim();
+    closePlaylistActionsModal();
+    if (newName) {
+      renamePlaylist(oldName, newName);
+    }
+  });
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      saveBtn.click();
+    }
+  });
+
+  actions.append(cancelBtn, saveBtn);
+  body.appendChild(actions);
+  input.focus();
+  input.select();
+}
+
+function renderPlaylistActionsDeleteConfirm() {
+  const name = playlistActionsTargetName;
+  const body = document.getElementById('playlist-actions-modal-body');
+  body.innerHTML = '';
+
+  const text = document.createElement('div');
+  text.className = 'modal-confirm-text';
+  text.textContent = `Delete "${name}"? This cannot be undone.`;
+  body.appendChild(text);
+
+  const actions = document.createElement('div');
+  actions.className = 'modal-inline-actions';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.className = 'modal-inline-btn';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.addEventListener('click', renderPlaylistActionsMenu);
+
+  const confirmBtn = document.createElement('button');
+  confirmBtn.type = 'button';
+  confirmBtn.className = 'modal-inline-btn modal-inline-btn-danger';
+  confirmBtn.textContent = 'Delete';
+  confirmBtn.addEventListener('click', () => {
+    closePlaylistActionsModal();
+    deletePlaylist(name);
+  });
+
+  actions.append(cancelBtn, confirmBtn);
+  body.appendChild(actions);
 }
 
 async function renamePlaylist(oldName, newName) {
@@ -2122,34 +2254,6 @@ if (typeof document !== 'undefined') {
     }
   });
 
-  document.getElementById('playlist-actions-play-btn').addEventListener('click', () => {
-    if (!playlistActionsTargetName) {
-      return;
-    }
-    closePlaylistActionsModal();
-    playAll();
-  });
-  document.getElementById('playlist-actions-rename-btn').addEventListener('click', () => {
-    const oldName = playlistActionsTargetName;
-    if (!oldName) {
-      return;
-    }
-    const newName = (window.prompt('Rename playlist', oldName) || '').trim();
-    closePlaylistActionsModal();
-    if (newName) {
-      renamePlaylist(oldName, newName);
-    }
-  });
-  document.getElementById('playlist-actions-delete-btn').addEventListener('click', () => {
-    const name = playlistActionsTargetName;
-    if (!name) {
-      return;
-    }
-    closePlaylistActionsModal();
-    if (window.confirm(`Delete playlist "${name}"? This cannot be undone.`)) {
-      deletePlaylist(name);
-    }
-  });
   document.getElementById('playlist-actions-modal-close').addEventListener('click', closePlaylistActionsModal);
   document.getElementById('playlist-actions-modal-overlay').addEventListener('click', (event) => {
     if (event.target.id === 'playlist-actions-modal-overlay') {

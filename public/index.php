@@ -133,11 +133,7 @@ enforce_dashboard_auth();
           <span id="playlist-actions-modal-title">Playlist</span>
           <button type="button" id="playlist-actions-modal-close" aria-label="Close">&times;</button>
         </div>
-        <div id="playlist-actions-modal-body">
-          <button type="button" id="playlist-actions-play-btn" class="modal-option">Play</button>
-          <button type="button" id="playlist-actions-rename-btn" class="modal-option">Rename</button>
-          <button type="button" id="playlist-actions-delete-btn" class="modal-option modal-option-danger">Delete</button>
-        </div>
+        <div id="playlist-actions-modal-body"></div>
       </div>
     </div>
   </main>
