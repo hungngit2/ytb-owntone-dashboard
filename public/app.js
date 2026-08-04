@@ -756,6 +756,10 @@ async function playNext(item, triggerBtn) {
     localQueue.items = insertAfterIndex(localQueue.items, localQueue.current_index, toPlaylistEntry(item));
     saveLocalQueue();
     flashSuccess();
+    // It's about to play right after the current track, possibly well
+    // before the normal near-end-of-track prefetch window would ever
+    // trigger for it (e.g. the current track is long) — warm it now.
+    prefetchStreamUrl(item.webpage_url);
     if (triggerBtn) {
       triggerBtn.disabled = false;
     }
@@ -772,6 +776,7 @@ async function playNext(item, triggerBtn) {
     if (data.status === 'ok') {
       serverQueue.items = data.items;
       flashSuccess();
+      prefetchStreamUrl(item.webpage_url);
     } else {
       showError(data.message || 'Play Next failed');
     }
