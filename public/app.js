@@ -882,43 +882,6 @@ async function saveToPlaylist(name, item, triggerBtn) {
   }
 }
 
-async function createPlaylist(name) {
-  if (isLocalMode()) {
-    const trimmed = name.trim();
-    if (!trimmed) {
-      return;
-    }
-    if (!playlists.some((p) => p.name === trimmed)) {
-      playlists.push({ name: trimmed, items: [] });
-    }
-    currentPlaylistName = trimmed;
-    saveLocalPlaylists();
-    renderPlaylistSelector();
-    renderResults();
-    return;
-  }
-
-  try {
-    const res = await fetch('backend.php', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `action=playlist_create&name=${encodeURIComponent(name)}`,
-    });
-    const data = await res.json();
-
-    if (data.status === 'ok') {
-      playlists = data.playlists;
-      currentPlaylistName = name;
-      renderPlaylistSelector();
-      renderResults();
-    } else {
-      showError(data.message || 'Create playlist failed');
-    }
-  } catch (err) {
-    showError('Create playlist request failed');
-  }
-}
-
 async function removeFromPlaylist(webpageUrl, triggerBtn) {
   if (triggerBtn) {
     triggerBtn.disabled = true;
@@ -1807,16 +1770,6 @@ if (typeof document !== 'undefined') {
 
   document.getElementById('tab-search').addEventListener('click', () => switchView('search'));
   document.getElementById('tab-playlist').addEventListener('click', () => switchView('playlist'));
-
-  document.getElementById('create-playlist-btn').addEventListener('click', () => {
-    const input = document.getElementById('new-playlist-name');
-    const name = input.value.trim();
-    if (!name) {
-      return;
-    }
-    createPlaylist(name);
-    input.value = '';
-  });
 
   document.getElementById('play-all-btn').addEventListener('click', playAll);
 

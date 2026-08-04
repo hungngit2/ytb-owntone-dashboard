@@ -163,12 +163,6 @@ rmdir(dirname($tmpPlaylistFile));
 $playlists = [];
 assert_true(find_playlist_index($playlists, 'Yêu thích') === null, 'find_playlist_index returns null when no playlists exist');
 
-$playlists = create_playlist($playlists, 'Yêu thích');
-assert_true(count($playlists) === 1 && $playlists[0]['name'] === 'Yêu thích' && $playlists[0]['items'] === [], 'create_playlist adds a new empty playlist');
-
-$playlists = create_playlist($playlists, 'Yêu thích');
-assert_true(count($playlists) === 1, 'create_playlist does not duplicate an existing name');
-
 $playlists = add_item_to_named_playlist($playlists, 'Yêu thích', ['webpage_url' => 'https://youtu.be/xxx', 'title' => 'Song X']);
 assert_true(count($playlists[0]['items']) === 1, 'add_item_to_named_playlist adds the item to the matching playlist');
 

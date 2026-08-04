@@ -758,32 +758,6 @@ body {
   background: rgba(99, 102, 241, 0.15);
 }
 
-#playlist-new-row {
-  display: flex;
-  gap: 8px;
-}
-
-#new-playlist-name {
-  flex: 1;
-  padding: 8px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: rgba(30, 41, 59, 0.4);
-  color: var(--text);
-  font-size: 13px;
-}
-
-#create-playlist-btn {
-  background: var(--surface-alt);
-  border: 1px solid var(--border);
-  color: var(--text);
-  padding: 8px 14px;
-  border-radius: 8px;
-  cursor: pointer;
-  font-size: 12px;
-  white-space: nowrap;
-}
-
 #play-all-btn {
   background: var(--accent);
   border: none;

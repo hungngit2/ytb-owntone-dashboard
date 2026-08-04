@@ -97,10 +97,6 @@ enforce_dashboard_auth();
 
     <div id="playlist-controls" style="display: none;">
       <div id="playlist-selector"></div>
-      <div id="playlist-new-row">
-        <input id="new-playlist-name" type="text" placeholder="New playlist name...">
-        <button id="create-playlist-btn" type="button">+ Create</button>
-      </div>
       <button id="play-all-btn" type="button"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> Play All</button>
     </div>
 

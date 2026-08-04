@@ -387,16 +387,6 @@ function find_playlist_index(array $playlists, string $name): ?int
     return null;
 }
 
-function create_playlist(array $playlists, string $name): array
-{
-    if (find_playlist_index($playlists, $name) !== null) {
-        return $playlists;
-    }
-
-    $playlists[] = ['name' => $name, 'items' => []];
-    return $playlists;
-}
-
 function add_item_to_named_playlist(array $playlists, string $name, array $item): array
 {
     $index = find_playlist_index($playlists, $name);
@@ -679,21 +669,6 @@ function next_queue_index(int $currentIndex, int $itemCount, bool $shuffle, stri
 function handle_playlists_list(): void
 {
     echo json_encode(load_playlist());
-}
-
-function handle_playlist_create(string $name): void
-{
-    $name = trim($name);
-    if ($name === '') {
-        http_response_code(400);
-        echo json_encode(['status' => 'error', 'message' => 'playlist name required']);
-        return;
-    }
-
-    $playlists = create_playlist(load_playlist(), $name);
-    save_playlist($playlists);
-
-    echo json_encode(['status' => 'ok', 'playlists' => $playlists]);
 }
 
 function handle_playlist_add_item(string $name, array $item): void
@@ -1912,8 +1887,6 @@ if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
         handle_queue_state();
     } elseif ($action === 'playlists_list') {
         handle_playlists_list();
-    } elseif ($action === 'playlist_create') {
-        handle_playlist_create((string) ($_POST['name'] ?? ''));
     } elseif ($action === 'playlist_add_item') {
         handle_playlist_add_item((string) ($_POST['name'] ?? ''), [
             'webpage_url' => (string) ($_POST['webpage_url'] ?? ''),
