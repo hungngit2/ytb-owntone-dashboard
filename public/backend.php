@@ -730,6 +730,39 @@ function handle_playlist_add_item(string $name, array $item): void
     echo json_encode(['status' => 'ok', 'playlists' => $playlists]);
 }
 
+// Bulk version of handle_playlist_add_item — powers "Copy to Server"
+// (cloning a whole local playlist in one request instead of one round
+// trip per track). Invalid items are skipped rather than failing the
+// whole clone over one bad entry.
+function handle_playlist_add_items(string $name, array $items): void
+{
+    $name = trim($name);
+    if ($name === '') {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'message' => 'playlist name required']);
+        return;
+    }
+
+    $playlists = load_playlist();
+    foreach ($items as $item) {
+        $url = is_array($item) ? ($item['webpage_url'] ?? '') : '';
+        if (!is_youtube_url($url)) {
+            continue;
+        }
+        $entry = [
+            'webpage_url' => $url,
+            'title' => $item['title'] ?? '',
+            'thumbnail' => $item['thumbnail'] ?? '',
+            'duration_string' => $item['duration_string'] ?? '',
+            'channel' => $item['channel'] ?? '',
+        ];
+        $playlists = add_item_to_named_playlist($playlists, $name, $entry);
+    }
+    save_playlist($playlists);
+
+    echo json_encode(['status' => 'ok', 'playlists' => $playlists]);
+}
+
 function handle_playlist_remove_item(string $name, string $url): void
 {
     $playlists = remove_item_from_named_playlist(load_playlist(), $name, $url);
@@ -2002,6 +2035,9 @@ if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
             'duration_string' => (string) ($_POST['duration_string'] ?? ''),
             'channel' => (string) ($_POST['channel'] ?? ''),
         ]);
+    } elseif ($action === 'playlist_add_items') {
+        $items = json_decode((string) ($_POST['items'] ?? '[]'), true);
+        handle_playlist_add_items((string) ($_POST['name'] ?? ''), is_array($items) ? $items : []);
     } elseif ($action === 'playlist_remove_item') {
         handle_playlist_remove_item((string) ($_POST['name'] ?? ''), (string) ($_POST['webpage_url'] ?? ''));
     } elseif ($action === 'playlist_rename') {

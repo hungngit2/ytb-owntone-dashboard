@@ -743,6 +743,7 @@ body {
 .playlist-pill {
   display: inline-flex;
   align-items: center;
+  gap: 6px;
   background: var(--surface-alt);
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -788,6 +789,28 @@ body {
 .playlist-pill-more:hover {
   background: rgba(148, 163, 184, 0.2);
   color: var(--text);
+}
+
+/* Local and server playlists can share a name, so this is the only
+   visible cue for which store a given pill/option actually belongs to. */
+.playlist-pill-badge {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 3px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.playlist-pill-badge-local {
+  background: rgba(148, 163, 184, 0.2);
+  color: var(--text-dim);
+}
+
+.playlist-pill-badge-server {
+  background: rgba(34, 197, 94, 0.18);
+  color: #4ade80;
 }
 
 /* ---- Results ---- */
@@ -1267,6 +1290,10 @@ body {
 .modal-option-create:hover {
   background: rgba(99, 102, 241, 0.25);
   border-color: rgba(99, 102, 241, 0.5);
+}
+
+.modal-option-row {
+  justify-content: space-between;
 }
 
 /* ---- Playlist-actions modal (playlist pill click) ---- */

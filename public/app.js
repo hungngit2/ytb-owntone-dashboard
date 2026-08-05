@@ -22,6 +22,8 @@ const ICONS = {
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6v12l8-6z" fill="currentColor" stroke="none"/><line x1="16" y1="6" x2="16" y2="12"/><line x1="13" y1="9" x2="19" y2="9"/></svg>',
   check:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
+  copy:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
 };
 
 // iOS Safari silently ignores HTMLMediaElement.volume — it's a WebKit
@@ -134,8 +136,16 @@ if (typeof module !== 'undefined' && module.exports) {
 }
 
 let searchResults = [];
+// Playlists live in two independent stores regardless of the current
+// playback mode — localPlaylists/serverPlaylists are the raw per-store
+// arrays (no source tag), `playlists` is the merged, source-tagged view
+// everything else reads from. mergePlaylists() rebuilds it after either
+// store changes — never assign to `playlists` directly.
+let localPlaylists = [];
+let serverPlaylists = [];
 let playlists = [];
 let currentPlaylistName = null;
+let currentPlaylistSource = null; // 'local' | 'server'
 let currentView = 'search';
 
 const LS_KEYS = {
@@ -143,12 +153,52 @@ const LS_KEYS = {
   searchResults: 'ytb-tone-local-search',
   playlists: 'ytb-tone-local-playlists',
   currentPlaylist: 'ytb-tone-local-current-playlist',
+  currentPlaylistSource: 'ytb-tone-local-current-playlist-source',
   volume: 'ytb-tone-local-volume',
   shuffle: 'ytb-tone-local-shuffle',
   repeat: 'ytb-tone-local-repeat',
   autoAdvance: 'ytb-tone-local-auto-advance',
   queue: 'ytb-tone-local-queue',
 };
+
+function mergePlaylists() {
+  playlists = [
+    ...localPlaylists.map((p) => ({ ...p, source: 'local' })),
+    ...serverPlaylists.map((p) => ({ ...p, source: 'server' })),
+  ];
+}
+
+// The single place currentPlaylistName/currentPlaylistSource change, so
+// the selection always persists together (a name alone is ambiguous now
+// that a local and a server playlist can share it).
+function selectPlaylist(name, source) {
+  currentPlaylistName = name;
+  currentPlaylistSource = source;
+  if (name && source) {
+    localStorage.setItem(LS_KEYS.currentPlaylist, name);
+    localStorage.setItem(LS_KEYS.currentPlaylistSource, source);
+  }
+}
+
+// Restores the last-selected playlist after (re)loading both stores —
+// keeps the current selection if it's still around, else falls back to
+// whatever was persisted, else the first playlist, else nothing.
+function restoreCurrentPlaylistSelection() {
+  const stillValid = playlists.some((p) => p.name === currentPlaylistName && p.source === currentPlaylistSource);
+  if (stillValid) {
+    return;
+  }
+  const storedName = localStorage.getItem(LS_KEYS.currentPlaylist);
+  const storedSource = localStorage.getItem(LS_KEYS.currentPlaylistSource);
+  const stored = playlists.find((p) => p.name === storedName && p.source === storedSource);
+  if (stored) {
+    selectPlaylist(stored.name, stored.source);
+  } else if (playlists.length > 0) {
+    selectPlaylist(playlists[0].name, playlists[0].source);
+  } else {
+    selectPlaylist(null, null);
+  }
+}
 
 function saveLocalQueue() {
   writeLocalStorageJson(LS_KEYS.queue, localQueue);
@@ -202,20 +252,11 @@ function loadLocalSearchResults() {
 }
 
 function saveLocalPlaylists() {
-  writeLocalStorageJson(LS_KEYS.playlists, playlists);
-  if (currentPlaylistName) {
-    localStorage.setItem(LS_KEYS.currentPlaylist, currentPlaylistName);
-  }
+  writeLocalStorageJson(LS_KEYS.playlists, localPlaylists);
 }
 
 function loadLocalPlaylistsFromStorage() {
-  playlists = readLocalStorageJson(LS_KEYS.playlists, []);
-  currentPlaylistName = localStorage.getItem(LS_KEYS.currentPlaylist);
-  if ((!currentPlaylistName || !playlists.some((p) => p.name === currentPlaylistName)) && playlists.length > 0) {
-    currentPlaylistName = playlists[0].name;
-  }
-  renderPlaylistSelector();
-  renderResults();
+  localPlaylists = readLocalStorageJson(LS_KEYS.playlists, []);
 }
 
 function saveLocalPlaybackPrefs() {
@@ -324,20 +365,13 @@ async function setPlayMode(mode) {
     toggleBtn.disabled = false;
   }
 
+  // Playlists (local + server) don't depend on play mode — no reload
+  // needed here, unlike search results, which local mode keeps separate.
   if (isLocalMode()) {
     disconnectOwnToneLiveUpdates();
     loadLocalSearchResults();
-    if (currentView === 'playlist') {
-      loadLocalPlaylistsFromStorage();
-    } else {
-      playlists = readLocalStorageJson(LS_KEYS.playlists, []);
-      currentPlaylistName = localStorage.getItem(LS_KEYS.currentPlaylist);
-    }
   } else {
     await loadLastSearch();
-    if (currentView === 'playlist') {
-      await loadPlaylists();
-    }
     connectOwnToneLiveUpdates();
     refreshPlayerState();
   }
@@ -347,7 +381,7 @@ function activeItems() {
   if (currentView === 'search') {
     return searchResults;
   }
-  const playlist = playlists.find((p) => p.name === currentPlaylistName);
+  const playlist = playlists.find((p) => p.name === currentPlaylistName && p.source === currentPlaylistSource);
   return playlist ? playlist.items : [];
 }
 
@@ -814,11 +848,12 @@ async function loadLastSearch() {
   }
 }
 
+// Always loads BOTH stores regardless of the current play mode — local
+// playlists live in this browser only, server playlists live on
+// chainedbox, and either can be browsed/played/cloned no matter which
+// engine (OwnTone or the in-browser <audio>) is actually playing.
 async function loadPlaylists() {
-  if (isLocalMode()) {
-    loadLocalPlaylistsFromStorage();
-    return;
-  }
+  loadLocalPlaylistsFromStorage();
 
   try {
     const res = await fetch('backend.php', {
@@ -827,20 +862,16 @@ async function loadPlaylists() {
       body: 'action=playlists_list',
     });
     const data = await res.json();
-
-    if (Array.isArray(data)) {
-      playlists = data;
-      if ((!currentPlaylistName || !playlists.some((p) => p.name === currentPlaylistName)) && playlists.length > 0) {
-        currentPlaylistName = playlists[0].name;
-      }
-      renderPlaylistSelector();
-      renderResults();
-    } else {
-      showError((data && data.message) || 'Failed to load playlists');
-    }
+    serverPlaylists = Array.isArray(data) ? data : [];
   } catch (err) {
-    showError('Playlist request failed');
+    // Server unreachable — local playlists still work fine on their own.
+    serverPlaylists = [];
   }
+
+  mergePlaylists();
+  restoreCurrentPlaylistSelection();
+  renderPlaylistSelector();
+  renderResults();
 }
 
 function renderPlaylistSelector() {
@@ -850,22 +881,29 @@ function renderPlaylistSelector() {
   playlists.forEach((playlist) => {
     const pill = document.createElement('div');
     pill.className = 'playlist-pill';
-    pill.classList.toggle('active', playlist.name === currentPlaylistName);
+    pill.classList.toggle('active', playlist.name === currentPlaylistName && playlist.source === currentPlaylistSource);
 
     // A separate label button (selects/browses the playlist, the common
-    // case) and a "more" button (opens the play/rename/delete modal) —
-    // the modal used to open on every single click here, which made just
-    // switching which playlist you're browsing require an extra dismiss
-    // every time.
+    // case) and a "more" button (opens the play/rename/delete/copy modal)
+    // — the modal used to open on every single click here, which made
+    // just switching which playlist you're browsing require an extra
+    // dismiss every time.
     const label = document.createElement('button');
     label.type = 'button';
     label.className = 'playlist-pill-label';
     label.textContent = `${playlist.name} (${playlist.items.length})`;
     label.addEventListener('click', () => {
-      currentPlaylistName = playlist.name;
+      selectPlaylist(playlist.name, playlist.source);
       renderPlaylistSelector();
       renderResults();
     });
+
+    // Local and server playlists can share a name, so this badge is the
+    // only thing distinguishing which store a given pill actually is.
+    const badge = document.createElement('span');
+    badge.className = `playlist-pill-badge playlist-pill-badge-${playlist.source}`;
+    badge.textContent = playlist.source === 'local' ? 'Local' : 'Server';
+    badge.title = playlist.source === 'local' ? 'Stored in this browser only' : 'Stored on the server';
 
     const moreBtn = document.createElement('button');
     moreBtn.type = 'button';
@@ -874,34 +912,39 @@ function renderPlaylistSelector() {
     moreBtn.innerHTML = ICONS.moreVertical;
     moreBtn.addEventListener('click', (event) => {
       event.stopPropagation();
-      openPlaylistActionsModal(playlist.name);
+      openPlaylistActionsModal(playlist.name, playlist.source);
     });
 
-    pill.append(label, moreBtn);
+    pill.append(label, badge, moreBtn);
     selector.appendChild(pill);
   });
 }
 
 let playlistActionsTargetName = null;
+let playlistActionsTargetSource = null;
 
 function closePlaylistActionsModal() {
   document.getElementById('playlist-actions-modal-overlay').hidden = true;
   playlistActionsTargetName = null;
+  playlistActionsTargetSource = null;
 }
 
-function openPlaylistActionsModal(name) {
+function openPlaylistActionsModal(name, source) {
   playlistActionsTargetName = name;
+  playlistActionsTargetSource = source;
   document.getElementById('playlist-actions-modal-title').textContent = name;
   renderPlaylistActionsMenu();
   document.getElementById('playlist-actions-modal-overlay').hidden = false;
 }
 
-// The modal's default screen: Play/Rename/Delete. Rename and Delete swap
-// the body for an inline form/confirm (renderPlaylistActionsRename,
+// The modal's default screen: Play/Rename/Copy/Delete. Rename and Delete
+// swap the body for an inline form/confirm (renderPlaylistActionsRename,
 // renderPlaylistActionsDeleteConfirm) instead of a native prompt()/
 // confirm() — those look jarringly out of place against the app's own
 // modal styling.
 function renderPlaylistActionsMenu() {
+  const name = playlistActionsTargetName;
+  const source = playlistActionsTargetSource;
   const body = document.getElementById('playlist-actions-modal-body');
   body.innerHTML = '';
 
@@ -910,8 +953,15 @@ function renderPlaylistActionsMenu() {
   playBtn.className = 'modal-option';
   playBtn.innerHTML = `${ICONS.play} Play`;
   playBtn.addEventListener('click', () => {
+    // Explicitly plays THIS target's items, not activeItems() — the
+    // "more" button opens this modal independently of which pill is
+    // currently selected/shown below, so relying on the current
+    // selection here would sometimes play the wrong playlist.
+    const target = playlists.find((p) => p.name === name && p.source === source);
     closePlaylistActionsModal();
-    playAll();
+    if (target && target.items.length > 0) {
+      playQueueItem(target.items, 0);
+    }
   });
 
   const renameBtn = document.createElement('button');
@@ -920,17 +970,27 @@ function renderPlaylistActionsMenu() {
   renameBtn.innerHTML = `${ICONS.pencil} Rename`;
   renameBtn.addEventListener('click', renderPlaylistActionsRename);
 
+  const cloneBtn = document.createElement('button');
+  cloneBtn.type = 'button';
+  cloneBtn.className = 'modal-option';
+  cloneBtn.innerHTML = source === 'local' ? `${ICONS.copy} Copy to Server` : `${ICONS.copy} Copy to Local`;
+  cloneBtn.addEventListener('click', () => {
+    closePlaylistActionsModal();
+    clonePlaylist(name, source);
+  });
+
   const deleteBtn = document.createElement('button');
   deleteBtn.type = 'button';
   deleteBtn.className = 'modal-option modal-option-danger';
   deleteBtn.innerHTML = `${ICONS.trash} Delete`;
   deleteBtn.addEventListener('click', renderPlaylistActionsDeleteConfirm);
 
-  body.append(playBtn, renameBtn, deleteBtn);
+  body.append(playBtn, renameBtn, cloneBtn, deleteBtn);
 }
 
 function renderPlaylistActionsRename() {
   const oldName = playlistActionsTargetName;
+  const source = playlistActionsTargetSource;
   const body = document.getElementById('playlist-actions-modal-body');
   body.innerHTML = '';
 
@@ -957,7 +1017,7 @@ function renderPlaylistActionsRename() {
     const newName = input.value.trim();
     closePlaylistActionsModal();
     if (newName) {
-      renamePlaylist(oldName, newName);
+      renamePlaylist(oldName, source, newName);
     }
   });
   input.addEventListener('keydown', (event) => {
@@ -974,6 +1034,7 @@ function renderPlaylistActionsRename() {
 
 function renderPlaylistActionsDeleteConfirm() {
   const name = playlistActionsTargetName;
+  const source = playlistActionsTargetSource;
   const body = document.getElementById('playlist-actions-modal-body');
   body.innerHTML = '';
 
@@ -997,31 +1058,37 @@ function renderPlaylistActionsDeleteConfirm() {
   confirmBtn.textContent = 'Delete';
   confirmBtn.addEventListener('click', () => {
     closePlaylistActionsModal();
-    deletePlaylist(name);
+    deletePlaylist(name, source);
   });
 
   actions.append(cancelBtn, confirmBtn);
   body.appendChild(actions);
 }
 
-async function renamePlaylist(oldName, newName) {
+function selectPlaylistFallback() {
+  const fallback = playlists[0];
+  selectPlaylist(fallback ? fallback.name : null, fallback ? fallback.source : null);
+}
+
+async function renamePlaylist(oldName, source, newName) {
   if (!newName || newName === oldName) {
     return;
   }
-  if (playlists.some((p) => p.name === newName)) {
+  if (playlists.some((p) => p.name === newName && p.source === source)) {
     showError('A playlist with that name already exists');
     return;
   }
 
-  if (isLocalMode()) {
-    const playlist = playlists.find((p) => p.name === oldName);
+  if (source === 'local') {
+    const playlist = localPlaylists.find((p) => p.name === oldName);
     if (playlist) {
       playlist.name = newName;
     }
-    if (currentPlaylistName === oldName) {
-      currentPlaylistName = newName;
-    }
     saveLocalPlaylists();
+    mergePlaylists();
+    if (currentPlaylistName === oldName && currentPlaylistSource === 'local') {
+      selectPlaylist(newName, 'local');
+    }
     renderPlaylistSelector();
     renderResults();
     return;
@@ -1036,9 +1103,10 @@ async function renamePlaylist(oldName, newName) {
     const data = await res.json();
 
     if (data.status === 'ok') {
-      playlists = data.playlists;
-      if (currentPlaylistName === oldName) {
-        currentPlaylistName = newName;
+      serverPlaylists = data.playlists;
+      mergePlaylists();
+      if (currentPlaylistName === oldName && currentPlaylistSource === 'server') {
+        selectPlaylist(newName, 'server');
       }
       renderPlaylistSelector();
       renderResults();
@@ -1050,13 +1118,14 @@ async function renamePlaylist(oldName, newName) {
   }
 }
 
-async function deletePlaylist(name) {
-  if (isLocalMode()) {
-    playlists = playlists.filter((p) => p.name !== name);
-    if (currentPlaylistName === name) {
-      currentPlaylistName = playlists[0] ? playlists[0].name : null;
-    }
+async function deletePlaylist(name, source) {
+  if (source === 'local') {
+    localPlaylists = localPlaylists.filter((p) => p.name !== name);
     saveLocalPlaylists();
+    mergePlaylists();
+    if (currentPlaylistName === name && currentPlaylistSource === 'local') {
+      selectPlaylistFallback();
+    }
     renderPlaylistSelector();
     renderResults();
     return;
@@ -1071,9 +1140,10 @@ async function deletePlaylist(name) {
     const data = await res.json();
 
     if (data.status === 'ok') {
-      playlists = data.playlists;
-      if (currentPlaylistName === name) {
-        currentPlaylistName = playlists[0] ? playlists[0].name : null;
+      serverPlaylists = data.playlists;
+      mergePlaylists();
+      if (currentPlaylistName === name && currentPlaylistSource === 'server') {
+        selectPlaylistFallback();
       }
       renderPlaylistSelector();
       renderResults();
@@ -1083,6 +1153,55 @@ async function deletePlaylist(name) {
   } catch (err) {
     showError('Delete request failed');
   }
+}
+
+// Duplicates a whole playlist into the OTHER store, merging into an
+// existing same-named playlist there (same dedupe-by-video-id as the
+// single-item Save flow) rather than overwriting it — so cloning twice,
+// or cloning into a playlist that already has some overlapping tracks,
+// is safe and never loses data.
+async function clonePlaylist(name, fromSource) {
+  const playlist = playlists.find((p) => p.name === name && p.source === fromSource);
+  if (!playlist || playlist.items.length === 0) {
+    return;
+  }
+
+  if (fromSource === 'local') {
+    try {
+      const res = await fetch('backend.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `action=playlist_add_items&name=${encodeURIComponent(name)}&items=${encodeURIComponent(JSON.stringify(playlist.items))}`,
+      });
+      const data = await res.json();
+      if (data.status === 'ok') {
+        serverPlaylists = data.playlists;
+        mergePlaylists();
+        renderPlaylistSelector();
+        renderResults();
+      } else {
+        showError(data.message || 'Copy failed');
+      }
+    } catch (err) {
+      showError('Copy request failed');
+    }
+    return;
+  }
+
+  let destination = localPlaylists.find((p) => p.name === name);
+  if (!destination) {
+    destination = { name, items: [] };
+    localPlaylists.push(destination);
+  }
+  playlist.items.forEach((item) => {
+    if (!destination.items.some((entry) => extractYoutubeVideoId(entry.webpage_url) === extractYoutubeVideoId(item.webpage_url))) {
+      destination.items.push(toPlaylistEntry(item));
+    }
+  });
+  saveLocalPlaylists();
+  mergePlaylists();
+  renderPlaylistSelector();
+  renderResults();
 }
 
 let playlistModalItem = null;
@@ -1122,18 +1241,24 @@ function renderPlaylistModalOptions(query) {
   matches.forEach((playlist) => {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'modal-option';
-    btn.textContent = `${playlist.name} (${playlist.items.length})`;
+    btn.className = 'modal-option modal-option-row';
+    btn.innerHTML =
+      `<span>${playlist.name} (${playlist.items.length})</span>` +
+      `<span class="playlist-pill-badge playlist-pill-badge-${playlist.source}">${playlist.source === 'local' ? 'Local' : 'Server'}</span>`;
     btn.addEventListener('click', () => {
       const item = playlistModalItem;
       const triggerBtn = playlistModalTriggerBtn;
       closePlaylistModal();
-      saveToPlaylist(playlist.name, item, triggerBtn);
+      saveToPlaylist(playlist.name, playlist.source, item, triggerBtn);
     });
     body.appendChild(btn);
   });
 
-  const exactMatch = playlists.some((playlist) => playlist.name.toLowerCase() === normalizedQuery);
+  // "+ Create" always targets whichever store matches the current play
+  // mode — the least surprising default when both stores are visible at
+  // once, without adding a separate control just to pick one.
+  const createSource = isLocalMode() ? 'local' : 'server';
+  const exactMatch = playlists.some((playlist) => playlist.name.toLowerCase() === normalizedQuery && playlist.source === createSource);
   if (trimmedQuery && !exactMatch) {
     const createBtn = document.createElement('button');
     createBtn.type = 'button';
@@ -1143,7 +1268,7 @@ function renderPlaylistModalOptions(query) {
       const item = playlistModalItem;
       const triggerBtn = playlistModalTriggerBtn;
       closePlaylistModal();
-      saveToPlaylist(trimmedQuery, item, triggerBtn);
+      saveToPlaylist(trimmedQuery, createSource, item, triggerBtn);
     });
     body.appendChild(createBtn);
   } else if (matches.length === 0) {
@@ -1154,23 +1279,24 @@ function renderPlaylistModalOptions(query) {
   }
 }
 
-async function saveToPlaylist(name, item, triggerBtn) {
+async function saveToPlaylist(name, source, item, triggerBtn) {
   if (triggerBtn) {
     triggerBtn.disabled = true;
   }
 
-  if (isLocalMode()) {
+  if (source === 'local') {
     try {
-      let playlist = playlists.find((p) => p.name === name);
+      let playlist = localPlaylists.find((p) => p.name === name);
       if (!playlist) {
         playlist = { name, items: [] };
-        playlists.push(playlist);
+        localPlaylists.push(playlist);
       }
       if (!playlist.items.some((entry) => extractYoutubeVideoId(entry.webpage_url) === extractYoutubeVideoId(item.webpage_url))) {
         playlist.items.push(toPlaylistEntry(item));
       }
-      currentPlaylistName = name;
       saveLocalPlaylists();
+      mergePlaylists();
+      selectPlaylist(name, 'local');
       if (triggerBtn) {
         triggerBtn.innerHTML = ICONS.starFilled;
       }
@@ -1198,8 +1324,9 @@ async function saveToPlaylist(name, item, triggerBtn) {
     const data = await res.json();
 
     if (data.status === 'ok') {
-      playlists = data.playlists;
-      currentPlaylistName = name;
+      serverPlaylists = data.playlists;
+      mergePlaylists();
+      selectPlaylist(name, 'server');
       if (triggerBtn) {
         triggerBtn.innerHTML = ICONS.starFilled;
       }
@@ -1220,13 +1347,14 @@ async function removeFromPlaylist(webpageUrl, triggerBtn) {
     triggerBtn.disabled = true;
   }
 
-  if (isLocalMode()) {
+  if (currentPlaylistSource === 'local') {
     try {
-      const playlist = playlists.find((p) => p.name === currentPlaylistName);
+      const playlist = localPlaylists.find((p) => p.name === currentPlaylistName);
       if (playlist) {
         const targetId = extractYoutubeVideoId(webpageUrl);
         playlist.items = playlist.items.filter((entry) => extractYoutubeVideoId(entry.webpage_url) !== targetId);
         saveLocalPlaylists();
+        mergePlaylists();
         renderPlaylistSelector();
         renderResults();
       }
@@ -1250,7 +1378,8 @@ async function removeFromPlaylist(webpageUrl, triggerBtn) {
     const data = await res.json();
 
     if (data.status === 'ok') {
-      playlists = data.playlists;
+      serverPlaylists = data.playlists;
+      mergePlaylists();
       renderPlaylistSelector();
       renderResults();
     } else {
@@ -2370,11 +2499,12 @@ if (typeof document !== 'undefined') {
     if (!trimmedQuery) {
       return;
     }
-    const exact = playlists.find((playlist) => playlist.name.toLowerCase() === trimmedQuery.toLowerCase());
+    const createSource = isLocalMode() ? 'local' : 'server';
+    const exact = playlists.find((playlist) => playlist.name.toLowerCase() === trimmedQuery.toLowerCase() && playlist.source === createSource);
     const item = playlistModalItem;
     const triggerBtn = playlistModalTriggerBtn;
     closePlaylistModal();
-    saveToPlaylist(exact ? exact.name : trimmedQuery, item, triggerBtn);
+    saveToPlaylist(exact ? exact.name : trimmedQuery, createSource, item, triggerBtn);
   });
 
   document.getElementById('playlist-actions-modal-close').addEventListener('click', closePlaylistActionsModal);
