@@ -24,7 +24,24 @@ const ICONS = {
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
   copy:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+  cloud:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19H9a5 5 0 0 1-1-9.9A6 6 0 0 1 19 8.5a4.5 4.5 0 0 1-1.5 10.5z"/></svg>',
 };
+
+// Server playlists get a cloud icon (local ones stay plain text) — the
+// only visible cue distinguishing two playlists that share a name.
+// Built via DOM nodes rather than innerHTML string interpolation so a
+// playlist name containing HTML-special characters can't inject markup.
+function appendPlaylistSourceIcon(el, source) {
+  if (source !== 'server') {
+    return;
+  }
+  const icon = document.createElement('span');
+  icon.className = 'playlist-source-icon';
+  icon.innerHTML = ICONS.cloud;
+  icon.title = 'Stored on the server';
+  el.appendChild(icon);
+}
 
 // iOS Safari silently ignores HTMLMediaElement.volume — it's a WebKit
 // platform restriction (volume can only be changed via the hardware
@@ -898,13 +915,6 @@ function renderPlaylistSelector() {
       renderResults();
     });
 
-    // Local and server playlists can share a name, so this badge is the
-    // only thing distinguishing which store a given pill actually is.
-    const badge = document.createElement('span');
-    badge.className = `playlist-pill-badge playlist-pill-badge-${playlist.source}`;
-    badge.textContent = playlist.source === 'local' ? 'Local' : 'Server';
-    badge.title = playlist.source === 'local' ? 'Stored in this browser only' : 'Stored on the server';
-
     const moreBtn = document.createElement('button');
     moreBtn.type = 'button';
     moreBtn.className = 'playlist-pill-more';
@@ -915,7 +925,17 @@ function renderPlaylistSelector() {
       openPlaylistActionsModal(playlist.name, playlist.source);
     });
 
-    pill.append(label, badge, moreBtn);
+    pill.appendChild(label);
+    // Server playlists get a cloud icon — the only visible cue telling
+    // apart two playlists that share a name. Local playlists get none.
+    if (playlist.source === 'server') {
+      const badge = document.createElement('span');
+      badge.className = 'playlist-pill-badge playlist-pill-badge-server';
+      badge.innerHTML = ICONS.cloud;
+      badge.title = 'Stored on the server';
+      pill.appendChild(badge);
+    }
+    pill.appendChild(moreBtn);
     selector.appendChild(pill);
   });
 }
@@ -932,7 +952,10 @@ function closePlaylistActionsModal() {
 function openPlaylistActionsModal(name, source) {
   playlistActionsTargetName = name;
   playlistActionsTargetSource = source;
-  document.getElementById('playlist-actions-modal-title').textContent = name;
+  const titleEl = document.getElementById('playlist-actions-modal-title');
+  titleEl.textContent = '';
+  appendPlaylistSourceIcon(titleEl, source);
+  titleEl.appendChild(document.createTextNode(name));
   renderPlaylistActionsMenu();
   document.getElementById('playlist-actions-modal-overlay').hidden = false;
 }
@@ -1040,7 +1063,8 @@ function renderPlaylistActionsDeleteConfirm() {
 
   const text = document.createElement('div');
   text.className = 'modal-confirm-text';
-  text.textContent = `Delete "${name}"? This cannot be undone.`;
+  appendPlaylistSourceIcon(text, source);
+  text.appendChild(document.createTextNode(`Delete "${name}"? This cannot be undone.`));
   body.appendChild(text);
 
   const actions = document.createElement('div');
@@ -1242,9 +1266,20 @@ function renderPlaylistModalOptions(query) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'modal-option modal-option-row';
-    btn.innerHTML =
-      `<span>${playlist.name} (${playlist.items.length})</span>` +
-      `<span class="playlist-pill-badge playlist-pill-badge-${playlist.source}">${playlist.source === 'local' ? 'Local' : 'Server'}</span>`;
+
+    // Built via DOM nodes (not an innerHTML template) so a playlist name
+    // containing HTML-special characters can't inject markup here.
+    const label = document.createElement('span');
+    label.textContent = `${playlist.name} (${playlist.items.length})`;
+    btn.appendChild(label);
+    // Server playlists get a cloud icon; local ones get no badge at all.
+    if (playlist.source === 'server') {
+      const badge = document.createElement('span');
+      badge.className = 'playlist-pill-badge playlist-pill-badge-server';
+      badge.innerHTML = ICONS.cloud;
+      btn.appendChild(badge);
+    }
+
     btn.addEventListener('click', () => {
       const item = playlistModalItem;
       const triggerBtn = playlistModalTriggerBtn;
@@ -1792,11 +1827,30 @@ function reflectAutoAdvanceUI() {
 // backend to absorb it after the fact.
 let playRequestInFlight = false;
 
+// Playing a whole playlist should make the Queue tab reflect exactly
+// what's now playing — otherwise switching to Queue afterwards would
+// still show whatever unrelated search was last run instead of the
+// playlist's tracks. Routes through cacheLastSearch so persistence
+// follows the current play mode (localStorage vs the server-side
+// cache), same as an actual search would.
+function fillQueueTabFromPlaylist(items) {
+  if (items === searchResults) {
+    return; // already playing from the Queue tab's own list
+  }
+  searchResults = [...items];
+  cacheLastSearch(searchResults);
+  if (currentView === 'search') {
+    renderResults();
+  }
+}
+
 // Persists the whole list + starting index server-side (not just a single
 // URL) so bin/queue-daemon.php can advance through it on its own — that's
 // what makes auto-play-next survive the browser being closed, since the
 // daemon (not this tab) is what decides and acts on "did it finish".
 async function playQueueItem(items, index, triggerBtn) {
+  fillQueueTabFromPlaylist(items);
+
   if (isLocalMode()) {
     return playLocalQueueItem(items, index, triggerBtn);
   }

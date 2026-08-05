@@ -794,23 +794,42 @@ body {
 /* Local and server playlists can share a name, so this is the only
    visible cue for which store a given pill/option actually belongs to. */
 .playlist-pill-badge {
+  display: inline-flex;
+  align-items: center;
   font-size: 9px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.03em;
-  padding: 3px 6px;
   border-radius: 4px;
   flex-shrink: 0;
 }
 
-.playlist-pill-badge-local {
-  background: rgba(148, 163, 184, 0.2);
-  color: var(--text-dim);
-}
-
+/* Server playlists are the only ones that get a badge at all (a cloud
+   icon) — local playlists show no indicator. */
 .playlist-pill-badge-server {
+  padding: 4px;
   background: rgba(34, 197, 94, 0.18);
   color: #4ade80;
+}
+
+.playlist-pill-badge svg {
+  width: 12px;
+  height: 12px;
+  display: block;
+}
+
+.playlist-source-icon {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 6px;
+  color: #4ade80;
+  vertical-align: middle;
+}
+
+.playlist-source-icon svg {
+  width: 14px;
+  height: 14px;
+  display: block;
 }
 
 /* ---- Results ---- */
