@@ -1554,6 +1554,48 @@ function setNowTitleText(text) {
   });
 }
 
+// Mirrors "now playing" into the OS-level media session (lock screen /
+// control center widget). Without this, mobile OSes fall back to
+// whatever they can infer from the <audio> element alone — which never
+// includes next/previous, only play/pause, no matter what the element
+// itself supports (confirmed live: Local mode's lock-screen widget had
+// no next/previous until these handlers were registered).
+function updateMediaSessionMetadata(title, artist, artworkUrl) {
+  if (!('mediaSession' in navigator)) {
+    return;
+  }
+  if (!title || title === 'Nothing playing') {
+    navigator.mediaSession.metadata = null;
+    return;
+  }
+  navigator.mediaSession.metadata = new MediaMetadata({
+    title,
+    artist: artist || '',
+    artwork: artworkUrl ? [{ src: artworkUrl, sizes: '512x512', type: 'image/jpeg' }] : [],
+  });
+}
+
+function syncMediaSessionPlaybackState(isPlaying) {
+  if ('mediaSession' in navigator) {
+    navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+  }
+}
+
+// playRelative already reads whichever queue (local or server) is
+// actually active, and play-pause-btn/stop-btn's own click handlers
+// already branch on play mode internally — reusing them here means
+// these action handlers work correctly in both modes for free.
+function setupMediaSessionHandlers() {
+  if (!('mediaSession' in navigator)) {
+    return;
+  }
+  navigator.mediaSession.setActionHandler('previoustrack', () => playRelative(-1));
+  navigator.mediaSession.setActionHandler('nexttrack', () => playRelative(1));
+  navigator.mediaSession.setActionHandler('play', () => document.getElementById('play-pause-btn').click());
+  navigator.mediaSession.setActionHandler('pause', () => document.getElementById('play-pause-btn').click());
+  navigator.mediaSession.setActionHandler('stop', () => document.getElementById('stop-btn').click());
+}
+
 function renderNowPlaying(fallbackTitle) {
   const titleEl = document.getElementById('now-title');
   titleEl.classList.remove('loading');
@@ -1571,10 +1613,11 @@ function renderNowPlaying(fallbackTitle) {
   // flash on reload (the exact bug this function exists to avoid).
   const ownToneReportedTitle = !isRawFifoFilename(fallbackTitle) ? fallbackTitle : '';
 
-  setNowTitleText(currentTrackInfo.title || (queueItem && queueItem.title) || ownToneReportedTitle || 'Nothing playing');
+  const effectiveTitle = currentTrackInfo.title || (queueItem && queueItem.title) || ownToneReportedTitle || 'Nothing playing';
+  setNowTitleText(effectiveTitle);
 
-  document.getElementById('now-subtitle').textContent =
-    currentTrackInfo.channel || (queueItem && queueItem.channel) || '';
+  const effectiveChannel = currentTrackInfo.channel || (queueItem && queueItem.channel) || '';
+  document.getElementById('now-subtitle').textContent = effectiveChannel;
 
   const thumbEl = document.getElementById('disc-thumb');
   const heroBgImg = document.getElementById('hero-bg-img');
@@ -1600,6 +1643,7 @@ function renderNowPlaying(fallbackTitle) {
     heroBgImg.removeAttribute('src');
   }
 
+  updateMediaSessionMetadata(effectiveTitle, effectiveChannel, thumbnailUrl);
   updatePlayingHighlight();
 }
 
@@ -1685,6 +1729,7 @@ function nextLocalQueueIndex(currentIndex, itemCount, shuffle, repeat) {
 
 function applyLocalPlayerState(isPlaying, progressSeconds, durationSeconds) {
   lastKnownIsPlaying = isPlaying;
+  syncMediaSessionPlaybackState(isPlaying);
   document.getElementById('play-pause-btn').innerHTML = isPlaying ? ICONS.pause : ICONS.play;
   document.getElementById('disc').classList.toggle('spinning', isPlaying);
   const badgeEl = document.getElementById('status-badge');
@@ -2002,6 +2047,7 @@ function applyPlayerState(player, queue) {
   }
 
   lastKnownIsPlaying = player.isPlaying;
+  syncMediaSessionPlaybackState(player.isPlaying);
 
   if (player.currentItemId !== lastSeenItemId) {
     lastSeenItemId = player.currentItemId;
@@ -2601,6 +2647,7 @@ if (typeof document !== 'undefined') {
     playMode = 'owntone';
   }
   applyPlayModeUI();
+  setupMediaSessionHandlers();
   loadLastSearch();
   loadPlaylists();
 
