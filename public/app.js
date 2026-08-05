@@ -1585,15 +1585,32 @@ function syncMediaSessionPlaybackState(isPlaying) {
 // actually active, and play-pause-btn/stop-btn's own click handlers
 // already branch on play mode internally — reusing them here means
 // these action handlers work correctly in both modes for free.
+// setActionHandler() throws a TypeError for any action the current
+// platform doesn't support — calling all five back-to-back with no
+// per-call handling meant one throw (previoustrack/nexttrack support is
+// inconsistent across mobile browsers) aborted the rest of this function,
+// silently skipping every handler after it, including play/pause/stop.
+// That's exactly why play/pause still worked (the browser infers that
+// much on its own from the <audio> element) while next/previous never
+// registered at all.
+function setMediaSessionAction(action, handler) {
+  try {
+    navigator.mediaSession.setActionHandler(action, handler);
+  } catch (err) {
+    // Not supported on this platform — leave it unset rather than take
+    // down every handler registered after it.
+  }
+}
+
 function setupMediaSessionHandlers() {
   if (!('mediaSession' in navigator)) {
     return;
   }
-  navigator.mediaSession.setActionHandler('previoustrack', () => playRelative(-1));
-  navigator.mediaSession.setActionHandler('nexttrack', () => playRelative(1));
-  navigator.mediaSession.setActionHandler('play', () => document.getElementById('play-pause-btn').click());
-  navigator.mediaSession.setActionHandler('pause', () => document.getElementById('play-pause-btn').click());
-  navigator.mediaSession.setActionHandler('stop', () => document.getElementById('stop-btn').click());
+  setMediaSessionAction('previoustrack', () => playRelative(-1));
+  setMediaSessionAction('nexttrack', () => playRelative(1));
+  setMediaSessionAction('play', () => document.getElementById('play-pause-btn').click());
+  setMediaSessionAction('pause', () => document.getElementById('play-pause-btn').click());
+  setMediaSessionAction('stop', () => document.getElementById('stop-btn').click());
 }
 
 function renderNowPlaying(fallbackTitle) {
