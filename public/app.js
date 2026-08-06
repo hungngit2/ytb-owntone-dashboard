@@ -18,6 +18,8 @@ const ICONS = {
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
   moreVertical:
     '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>',
+  dragHandle:
+    '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>',
   playNext:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6v12l8-6z" fill="currentColor" stroke="none"/><line x1="16" y1="6" x2="16" y2="12"/><line x1="13" y1="9" x2="19" y2="9"/></svg>',
   check:
@@ -426,6 +428,21 @@ function renderResults() {
       row.classList.add('playing');
     }
 
+    const dragHandle = document.createElement('button');
+    dragHandle.type = 'button';
+    dragHandle.className = 'result-drag-handle';
+    dragHandle.innerHTML = ICONS.dragHandle;
+    dragHandle.title = 'Drag to reorder';
+    dragHandle.setAttribute('aria-label', 'Drag to reorder');
+
+    // Thumb + title are the play target now (no separate Play button) —
+    // everything else lives behind the "more" modal, mirroring how a
+    // playlist pill's label plays/selects while its own "..." button
+    // opens a menu for the rest.
+    const playTarget = document.createElement('div');
+    playTarget.className = 'result-play-target';
+    playTarget.addEventListener('click', () => playQueueItem(items, index));
+
     const thumb = document.createElement('img');
     thumb.src = item.thumbnail || '';
     thumb.alt = item.title;
@@ -447,49 +464,21 @@ function renderResults() {
     durationEl.textContent = item.duration_string || '';
 
     meta.append(titleEl, channelEl, durationEl);
+    playTarget.append(thumb, meta);
 
-    const actions = document.createElement('div');
-    actions.className = 'result-actions';
+    const moreBtn = document.createElement('button');
+    moreBtn.type = 'button';
+    moreBtn.className = 'result-more-btn';
+    moreBtn.innerHTML = ICONS.moreVertical;
+    moreBtn.title = 'Track options';
+    moreBtn.setAttribute('aria-label', 'Track options');
+    moreBtn.addEventListener('click', (event) => {
+      event.stopPropagation();
+      openRowActionsModal(item, items);
+    });
 
-    const playBtn = document.createElement('button');
-    playBtn.className = 'play-btn';
-    playBtn.innerHTML = ICONS.play;
-    playBtn.title = 'Play';
-    playBtn.setAttribute('aria-label', 'Play');
-    playBtn.disabled = playRequestInFlight;
-    playBtn.addEventListener('click', () => playQueueItem(items, index, playBtn));
-    actions.appendChild(playBtn);
-
-    // Available from both Search and Playlist rows — inserts this track
-    // right after whatever's currently playing, without touching the
-    // rest of the queue (unlike Play, which replaces the whole queue).
-    const playNextBtn = document.createElement('button');
-    playNextBtn.className = 'save-btn';
-    playNextBtn.innerHTML = ICONS.playNext;
-    playNextBtn.title = 'Play next';
-    playNextBtn.setAttribute('aria-label', 'Play next');
-    playNextBtn.addEventListener('click', () => playNext(item, playNextBtn));
-    actions.appendChild(playNextBtn);
-
-    if (currentView === 'search') {
-      const saveBtn = document.createElement('button');
-      saveBtn.className = 'save-btn';
-      saveBtn.innerHTML = ICONS.star;
-      saveBtn.title = 'Save to playlist';
-      saveBtn.setAttribute('aria-label', 'Save to playlist');
-      saveBtn.addEventListener('click', () => openPlaylistModal(item, saveBtn));
-      actions.appendChild(saveBtn);
-    } else {
-      const removeBtn = document.createElement('button');
-      removeBtn.className = 'save-btn';
-      removeBtn.innerHTML = ICONS.trash;
-      removeBtn.title = 'Remove from playlist';
-      removeBtn.setAttribute('aria-label', 'Remove from playlist');
-      removeBtn.addEventListener('click', () => removeFromPlaylist(item.webpage_url, removeBtn));
-      actions.appendChild(removeBtn);
-    }
-
-    row.append(thumb, meta, actions);
+    row.append(dragHandle, playTarget, moreBtn);
+    enableRowDrag(row, dragHandle, items);
     list.appendChild(row);
   });
 
@@ -499,6 +488,196 @@ function renderResults() {
   // should still scroll to the playing item there on its own first render.
   lastAutoScrolledVideoId = null;
   updatePlayingHighlight();
+}
+
+let rowActionsItem = null;
+let rowActionsItems = null;
+
+function closeRowActionsModal() {
+  document.getElementById('row-actions-modal-overlay').hidden = true;
+  rowActionsItem = null;
+  rowActionsItems = null;
+}
+
+// The "more" button on a Queue/Playlist row opens this — Play itself
+// isn't listed here since the row's own thumb/title click already does
+// that (see renderResults); this only holds the actions that don't have
+// another trigger. No trigger-button icon to flash on success (there's
+// no persistent per-row icon anymore), so playNext/openPlaylistModal/
+// removeFromPlaylist are all called with a null triggerBtn.
+function openRowActionsModal(item, items) {
+  rowActionsItem = item;
+  rowActionsItems = items;
+  document.getElementById('row-actions-modal-title').textContent = item.title || '';
+
+  const body = document.getElementById('row-actions-modal-body');
+  body.innerHTML = '';
+
+  const playNextBtn = document.createElement('button');
+  playNextBtn.type = 'button';
+  playNextBtn.className = 'modal-option-flat';
+  playNextBtn.innerHTML = `${ICONS.playNext} Play next`;
+  playNextBtn.addEventListener('click', () => {
+    const target = rowActionsItem;
+    closeRowActionsModal();
+    playNext(target, null);
+  });
+  body.appendChild(playNextBtn);
+
+  if (currentView === 'search') {
+    const saveBtn = document.createElement('button');
+    saveBtn.type = 'button';
+    saveBtn.className = 'modal-option-flat';
+    saveBtn.innerHTML = `${ICONS.star} Save to playlist`;
+    saveBtn.addEventListener('click', () => {
+      const target = rowActionsItem;
+      closeRowActionsModal();
+      openPlaylistModal(target, null);
+    });
+    body.appendChild(saveBtn);
+  } else {
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'modal-option-flat modal-option-danger';
+    removeBtn.innerHTML = `${ICONS.trash} Remove from playlist`;
+    removeBtn.addEventListener('click', () => {
+      const target = rowActionsItem;
+      closeRowActionsModal();
+      removeFromPlaylist(target.webpage_url, null);
+    });
+    body.appendChild(removeBtn);
+  }
+
+  document.getElementById('row-actions-modal-overlay').hidden = false;
+}
+
+// --- Drag-to-reorder (Queue and Playlist rows) ---
+//
+// Pointer Events (not native HTML5 drag-and-drop, which most mobile
+// browsers don't support for touch) so the same code handles mouse and
+// touch. Rows are physically reordered in the DOM live as the pointer
+// crosses a neighboring row's midpoint; on release, the final DOM order
+// is read back and spliced into the SAME array reference activeItems()
+// handed out (searchResults, or a playlist's own items array) — so the
+// underlying data is already correct, and persistReorder just saves it.
+let rowDragState = null;
+
+function enableRowDrag(row, handle, items) {
+  handle.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    rowDragState = { row, items };
+    row.classList.add('dragging');
+    document.addEventListener('pointermove', onRowDragMove);
+    document.addEventListener('pointerup', onRowDragEnd);
+  });
+}
+
+function onRowDragMove(event) {
+  if (!rowDragState) {
+    return;
+  }
+  const list = document.getElementById('results-list');
+  const draggingRow = rowDragState.row;
+  const y = event.clientY;
+
+  for (const row of list.children) {
+    if (row === draggingRow) {
+      continue;
+    }
+    const rect = row.getBoundingClientRect();
+    const midpoint = rect.top + rect.height / 2;
+    if (y < midpoint && row.previousElementSibling === draggingRow) {
+      list.insertBefore(draggingRow, row);
+      break;
+    }
+    if (y > midpoint && row.nextElementSibling === draggingRow) {
+      list.insertBefore(draggingRow, row.nextElementSibling);
+      break;
+    }
+  }
+}
+
+function onRowDragEnd() {
+  if (!rowDragState) {
+    return;
+  }
+  const { row, items } = rowDragState;
+  row.classList.remove('dragging');
+  document.removeEventListener('pointermove', onRowDragMove);
+  document.removeEventListener('pointerup', onRowDragEnd);
+  rowDragState = null;
+
+  const list = document.getElementById('results-list');
+  const newOrder = [...list.children]
+    .map((r) => items.find((entry) => entry.webpage_url === r.dataset.url))
+    .filter(Boolean);
+  items.length = 0;
+  items.push(...newOrder);
+  persistReorder(items);
+}
+
+// `items` is already the live searchResults/playlist.items reference
+// (see the comment above enableRowDrag) — this only needs to persist
+// it, plus keep the actual playback queue's order in sync when it's the
+// same list that's currently playing.
+function persistReorder(items) {
+  if (currentView === 'playlist') {
+    if (currentPlaylistSource === 'local') {
+      saveLocalPlaylists();
+    } else {
+      persistServerPlaylistOrder(currentPlaylistName, items);
+    }
+    return;
+  }
+
+  cacheLastSearch(items);
+
+  const queue = isLocalMode() ? localQueue : serverQueue;
+  if (queue.current_index >= 0 && queue.items.length === items.length) {
+    const currentUrl = queue.items[queue.current_index] && queue.items[queue.current_index].webpage_url;
+    queue.items = items;
+    const newIndex = items.findIndex((entry) => entry.webpage_url === currentUrl);
+    if (newIndex >= 0) {
+      queue.current_index = newIndex;
+    }
+    if (isLocalMode()) {
+      saveLocalQueue();
+    } else {
+      persistServerQueueOrder(queue.items, queue.current_index);
+    }
+  }
+}
+
+async function persistServerPlaylistOrder(name, items) {
+  try {
+    const res = await fetch('backend.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `action=playlist_set_items&name=${encodeURIComponent(name)}&items=${encodeURIComponent(JSON.stringify(items))}`,
+    });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      serverPlaylists = data.playlists;
+      mergePlaylists();
+    } else {
+      showError(data.message || 'Reorder failed');
+    }
+  } catch (err) {
+    showError('Reorder request failed');
+  }
+}
+
+async function persistServerQueueOrder(items, currentIndex) {
+  try {
+    await fetch('backend.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `action=queue_reorder&items=${encodeURIComponent(JSON.stringify(items))}&current_index=${currentIndex}`,
+    });
+  } catch (err) {
+    // Best-effort — this tab's own in-memory order is already correct
+    // either way; only the daemon's view (for auto-advance) would lag.
+  }
 }
 
 function parseIso8601Duration(iso) {
@@ -1809,9 +1988,6 @@ async function playLocalQueueItem(items, index, triggerBtn) {
     return;
   }
   playRequestInFlight = true;
-  document.querySelectorAll('.play-btn').forEach((btn) => {
-    btn.disabled = true;
-  });
   if (triggerBtn) {
     triggerBtn.innerHTML = '<span class="spinner"></span>';
   }
@@ -1856,9 +2032,6 @@ async function playLocalQueueItem(items, index, triggerBtn) {
     applyLocalPlayerState(false, 0, 0);
   } finally {
     playRequestInFlight = false;
-    document.querySelectorAll('.play-btn').forEach((btn) => {
-      btn.disabled = false;
-    });
     if (triggerBtn) {
       triggerBtn.innerHTML = ICONS.play;
     }
@@ -1921,9 +2094,6 @@ async function playQueueItem(items, index, triggerBtn) {
     return;
   }
   playRequestInFlight = true;
-  document.querySelectorAll('.play-btn').forEach((btn) => {
-    btn.disabled = true;
-  });
   if (triggerBtn) {
     triggerBtn.innerHTML = '<span class="spinner"></span>';
   }
@@ -1974,9 +2144,6 @@ async function playQueueItem(items, index, triggerBtn) {
     // play request itself returns "ok".
     updateCookingIndicator();
     playRequestInFlight = false;
-    document.querySelectorAll('.play-btn').forEach((btn) => {
-      btn.disabled = false;
-    });
     if (triggerBtn) {
       triggerBtn.innerHTML = ICONS.play;
     }
@@ -2628,6 +2795,13 @@ if (typeof document !== 'undefined') {
   document.getElementById('playlist-actions-modal-overlay').addEventListener('click', (event) => {
     if (event.target.id === 'playlist-actions-modal-overlay') {
       closePlaylistActionsModal();
+    }
+  });
+
+  document.getElementById('row-actions-modal-close').addEventListener('click', closeRowActionsModal);
+  document.getElementById('row-actions-modal-overlay').addEventListener('click', (event) => {
+    if (event.target.id === 'row-actions-modal-overlay') {
+      closeRowActionsModal();
     }
   });
 

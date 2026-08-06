@@ -763,6 +763,48 @@ function handle_playlist_add_items(string $name, array $items): void
     echo json_encode(['status' => 'ok', 'playlists' => $playlists]);
 }
 
+// Wholesale-replaces a playlist's item order — powers drag-to-reorder,
+// where the frontend already has the full desired order and just needs
+// it persisted (not merged/deduped like handle_playlist_add_item(s)).
+// Invalid items are dropped rather than failing the whole reorder.
+function handle_playlist_set_items(string $name, array $items): void
+{
+    $name = trim($name);
+    if ($name === '') {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'message' => 'playlist name required']);
+        return;
+    }
+
+    $playlists = load_playlist();
+    $index = find_playlist_index($playlists, $name);
+    if ($index === null) {
+        http_response_code(404);
+        echo json_encode(['status' => 'error', 'message' => 'playlist not found']);
+        return;
+    }
+
+    $normalized = [];
+    foreach ($items as $item) {
+        $url = is_array($item) ? ($item['webpage_url'] ?? '') : '';
+        if (!is_youtube_url($url)) {
+            continue;
+        }
+        $normalized[] = [
+            'webpage_url' => $url,
+            'title' => $item['title'] ?? '',
+            'thumbnail' => $item['thumbnail'] ?? '',
+            'duration_string' => $item['duration_string'] ?? '',
+            'channel' => $item['channel'] ?? '',
+        ];
+    }
+
+    $playlists[$index]['items'] = $normalized;
+    save_playlist($playlists);
+
+    echo json_encode(['status' => 'ok', 'playlists' => $playlists]);
+}
+
 function handle_playlist_remove_item(string $name, string $url): void
 {
     $playlists = remove_item_from_named_playlist(load_playlist(), $name, $url);
@@ -1901,6 +1943,22 @@ function handle_queue_play_next(array $item): void
     echo json_encode(['status' => 'ok', 'items' => $result['items'] ?? []]);
 }
 
+// Drag-to-reorder for the Queue view — the frontend already knows the
+// full new order (and, if a track from this list is currently playing,
+// its new index), this just persists it so bin/queue-daemon.php's own
+// auto-advance follows the new order too. Fire-and-forget from the
+// frontend's perspective (its own in-memory order is already correct
+// either way), so this stays best-effort rather than surfacing errors.
+function handle_queue_reorder(array $items, int $currentIndex): void
+{
+    with_playback_lock(function () use ($items, $currentIndex) {
+        $state = load_queue_state();
+        save_queue_state($items, $currentIndex, $state['shuffle'], $state['repeat'], QUEUE_STATE_FILE, $state['auto_advance']);
+        return [];
+    });
+    echo json_encode(['status' => 'ok']);
+}
+
 // Reports whether the currently-playing track is fully cached yet — the
 // frontend uses this to decide whether the progress bar accepts a drag.
 function handle_queue_state(): void
@@ -2019,6 +2077,9 @@ if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
     } elseif ($action === 'queue_play_next') {
         $item = json_decode((string) ($_POST['item'] ?? '{}'), true);
         handle_queue_play_next(is_array($item) ? $item : []);
+    } elseif ($action === 'queue_reorder') {
+        $items = json_decode((string) ($_POST['items'] ?? '[]'), true);
+        handle_queue_reorder(is_array($items) ? $items : [], (int) ($_POST['current_index'] ?? -1));
     } elseif ($action === 'stop') {
         handle_stop();
     } elseif ($action === 'seek') {
@@ -2038,6 +2099,9 @@ if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
     } elseif ($action === 'playlist_add_items') {
         $items = json_decode((string) ($_POST['items'] ?? '[]'), true);
         handle_playlist_add_items((string) ($_POST['name'] ?? ''), is_array($items) ? $items : []);
+    } elseif ($action === 'playlist_set_items') {
+        $items = json_decode((string) ($_POST['items'] ?? '[]'), true);
+        handle_playlist_set_items((string) ($_POST['name'] ?? ''), is_array($items) ? $items : []);
     } elseif ($action === 'playlist_remove_item') {
         handle_playlist_remove_item((string) ($_POST['name'] ?? ''), (string) ($_POST['webpage_url'] ?? ''));
     } elseif ($action === 'playlist_rename') {

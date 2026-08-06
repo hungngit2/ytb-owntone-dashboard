@@ -135,6 +135,16 @@ enforce_dashboard_auth();
         <div id="playlist-actions-modal-body"></div>
       </div>
     </div>
+
+    <div id="row-actions-modal-overlay" hidden>
+      <div id="row-actions-modal">
+        <div id="row-actions-modal-header">
+          <span id="row-actions-modal-title">Track</span>
+          <button type="button" id="row-actions-modal-close" aria-label="Close">&times;</button>
+        </div>
+        <div id="row-actions-modal-body"></div>
+      </div>
+    </div>
   </main>
 
   <script src="config.js"></script>
