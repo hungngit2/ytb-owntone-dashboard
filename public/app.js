@@ -555,20 +555,46 @@ function openRowActionsModal(item, items) {
 //
 // Pointer Events (not native HTML5 drag-and-drop, which most mobile
 // browsers don't support for touch) so the same code handles mouse and
-// touch. Rows are physically reordered in the DOM live as the pointer
-// crosses a neighboring row's midpoint; on release, the final DOM order
-// is read back and spliced into the SAME array reference activeItems()
-// handed out (searchResults, or a playlist's own items array) — so the
-// underlying data is already correct, and persistReorder just saves it.
+// touch. A floating "ghost" clone follows the pointer directly (so it
+// reads as an actual drag, not just rows silently swapping under your
+// finger), while the real row — now just a placeholder — gets live-
+// reordered in the DOM as the pointer crosses other rows, and the list
+// auto-scrolls near its top/bottom edge so you can drop anywhere in a
+// long list, not just whatever's currently on screen. On release, the
+// final DOM order is read back and spliced into the SAME array
+// reference activeItems() handed out (searchResults, or a playlist's
+// own items array) — so the underlying data is already correct, and
+// persistReorder just saves it.
 let rowDragState = null;
+let rowDragAutoScrollFrame = null;
+
+const ROW_DRAG_EDGE_PX = 48;
+const ROW_DRAG_SCROLL_SPEED = 12;
 
 function enableRowDrag(row, handle, items) {
   handle.addEventListener('pointerdown', (event) => {
     event.preventDefault();
-    rowDragState = { row, items };
+
+    const rowRect = row.getBoundingClientRect();
+    const ghost = row.cloneNode(true);
+    ghost.className = 'result-row result-row-ghost';
+    ghost.style.width = `${rowRect.width}px`;
+    ghost.style.top = `${rowRect.top}px`;
+    ghost.style.left = `${rowRect.left}px`;
+    document.body.appendChild(ghost);
+
+    rowDragState = {
+      row,
+      items,
+      ghost,
+      grabOffsetY: event.clientY - rowRect.top,
+      lastClientY: event.clientY,
+    };
     row.classList.add('dragging');
     document.addEventListener('pointermove', onRowDragMove);
     document.addEventListener('pointerup', onRowDragEnd);
+    document.addEventListener('pointercancel', onRowDragEnd);
+    startRowDragAutoScroll();
   });
 }
 
@@ -576,6 +602,9 @@ function onRowDragMove(event) {
   if (!rowDragState) {
     return;
   }
+  rowDragState.lastClientY = event.clientY;
+  rowDragState.ghost.style.top = `${event.clientY - rowDragState.grabOffsetY}px`;
+
   const list = document.getElementById('results-list');
   const draggingRow = rowDragState.row;
   const y = event.clientY;
@@ -606,14 +635,44 @@ function onRowDragMove(event) {
   }
 }
 
+// Keeps scrolling #results-list while the pointer sits near its top/
+// bottom edge during a drag (checked every frame, not just on move, so
+// holding still near an edge keeps scrolling) — without this, you can't
+// reorder something into or past whatever's currently off-screen.
+function startRowDragAutoScroll() {
+  const tick = () => {
+    if (!rowDragState) {
+      rowDragAutoScrollFrame = null;
+      return;
+    }
+    const list = document.getElementById('results-list');
+    const rect = list.getBoundingClientRect();
+    const y = rowDragState.lastClientY;
+
+    if (y < rect.top + ROW_DRAG_EDGE_PX) {
+      list.scrollTop -= ROW_DRAG_SCROLL_SPEED;
+    } else if (y > rect.bottom - ROW_DRAG_EDGE_PX) {
+      list.scrollTop += ROW_DRAG_SCROLL_SPEED;
+    }
+    rowDragAutoScrollFrame = requestAnimationFrame(tick);
+  };
+  rowDragAutoScrollFrame = requestAnimationFrame(tick);
+}
+
 function onRowDragEnd() {
   if (!rowDragState) {
     return;
   }
-  const { row, items } = rowDragState;
+  const { row, items, ghost } = rowDragState;
+  ghost.remove();
   row.classList.remove('dragging');
   document.removeEventListener('pointermove', onRowDragMove);
   document.removeEventListener('pointerup', onRowDragEnd);
+  document.removeEventListener('pointercancel', onRowDragEnd);
+  if (rowDragAutoScrollFrame) {
+    cancelAnimationFrame(rowDragAutoScrollFrame);
+    rowDragAutoScrollFrame = null;
+  }
   rowDragState = null;
 
   const list = document.getElementById('results-list');

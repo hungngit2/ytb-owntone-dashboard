@@ -1012,8 +1012,19 @@ body {
   height: 16px;
 }
 
+/* The floating .result-row-ghost is what visually represents the drag
+   now — this becomes just a placeholder marking the row's current slot
+   as it gets reordered underneath. */
 .result-row.dragging {
-  opacity: 0.5;
+  opacity: 0.3;
+  border-style: dashed;
+}
+
+.result-row-ghost {
+  position: fixed;
+  z-index: 1000;
+  pointer-events: none;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
 }
 
 /* Thumb + title are the play target now — everything else lives behind
