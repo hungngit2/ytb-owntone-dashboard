@@ -18,8 +18,6 @@ const ICONS = {
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
   moreVertical:
     '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>',
-  dragHandle:
-    '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>',
   playNext:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6v12l8-6z" fill="currentColor" stroke="none"/><line x1="16" y1="6" x2="16" y2="12"/><line x1="13" y1="9" x2="19" y2="9"/></svg>',
   check:
@@ -428,20 +426,16 @@ function renderResults() {
       row.classList.add('playing');
     }
 
-    const dragHandle = document.createElement('button');
-    dragHandle.type = 'button';
-    dragHandle.className = 'result-drag-handle';
-    dragHandle.innerHTML = ICONS.dragHandle;
-    dragHandle.title = 'Drag to reorder';
-    dragHandle.setAttribute('aria-label', 'Drag to reorder');
-
     // Thumb + title are the play target now (no separate Play button) —
     // everything else lives behind the "more" modal, mirroring how a
     // playlist pill's label plays/selects while its own "..." button
-    // opens a menu for the rest.
+    // opens a menu for the rest. No dedicated drag handle either — a
+    // quick tap plays, holding it down starts a drag (see
+    // attachRowDragOrTap), same distinction most mobile reorderable
+    // lists use.
     const playTarget = document.createElement('div');
     playTarget.className = 'result-play-target';
-    playTarget.addEventListener('click', () => playQueueItem(items, index));
+    attachRowDragOrTap(playTarget, row, items, () => playQueueItem(items, index));
 
     const thumb = document.createElement('img');
     thumb.src = item.thumbnail || '';
@@ -477,8 +471,7 @@ function renderResults() {
       openRowActionsModal(item, items);
     });
 
-    row.append(dragHandle, playTarget, moreBtn);
-    enableRowDrag(row, dragHandle, items);
+    row.append(playTarget, moreBtn);
     list.appendChild(row);
   });
 
@@ -570,32 +563,83 @@ let rowDragAutoScrollFrame = null;
 
 const ROW_DRAG_EDGE_PX = 48;
 const ROW_DRAG_SCROLL_SPEED = 12;
+const ROW_LONG_PRESS_MS = 350;
+const ROW_LONG_PRESS_CANCEL_PX = 8;
 
-function enableRowDrag(row, handle, items) {
-  handle.addEventListener('pointerdown', (event) => {
-    event.preventDefault();
+// No dedicated drag handle (it ate too much width on narrow screens) —
+// the whole play target is both the tap-to-play and the press-to-drag
+// surface, distinguished by hold duration: released quickly → play;
+// held past ROW_LONG_PRESS_MS without much movement → drag starts.
+// Deliberately doesn't preventDefault/touch-action:none the target, so
+// a normal scroll swipe still works — if the browser decides a touch
+// is a scroll, it fires pointercancel here, which aborts the pending
+// long-press instead of fighting the scroll.
+function attachRowDragOrTap(target, row, items, onTap) {
+  target.addEventListener('pointerdown', (event) => {
+    if (event.pointerType === 'mouse' && event.button !== 0) {
+      return;
+    }
+    const startX = event.clientX;
+    const startY = event.clientY;
+    let longPressFired = false;
 
-    const rowRect = row.getBoundingClientRect();
-    const ghost = row.cloneNode(true);
-    ghost.className = 'result-row result-row-ghost';
-    ghost.style.width = `${rowRect.width}px`;
-    ghost.style.top = `${rowRect.top}px`;
-    ghost.style.left = `${rowRect.left}px`;
-    document.body.appendChild(ghost);
+    const timer = setTimeout(() => {
+      longPressFired = true;
+      cleanup();
+      beginRowDrag(row, items, startX, startY);
+    }, ROW_LONG_PRESS_MS);
 
-    rowDragState = {
-      row,
-      items,
-      ghost,
-      grabOffsetY: event.clientY - rowRect.top,
-      lastClientY: event.clientY,
-    };
-    row.classList.add('dragging');
-    document.addEventListener('pointermove', onRowDragMove);
-    document.addEventListener('pointerup', onRowDragEnd);
-    document.addEventListener('pointercancel', onRowDragEnd);
-    startRowDragAutoScroll();
+    function cleanup() {
+      clearTimeout(timer);
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+      target.removeEventListener('pointercancel', onCancel);
+    }
+    function onMove(moveEvent) {
+      const dx = Math.abs(moveEvent.clientX - startX);
+      const dy = Math.abs(moveEvent.clientY - startY);
+      if (dx > ROW_LONG_PRESS_CANCEL_PX || dy > ROW_LONG_PRESS_CANCEL_PX) {
+        cleanup();
+      }
+    }
+    function onUp() {
+      const wasLongPress = longPressFired;
+      cleanup();
+      if (!wasLongPress) {
+        onTap();
+      }
+    }
+    function onCancel() {
+      cleanup();
+    }
+
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+    target.addEventListener('pointercancel', onCancel);
   });
+}
+
+function beginRowDrag(row, items, clientX, clientY) {
+  const rowRect = row.getBoundingClientRect();
+  const ghost = row.cloneNode(true);
+  ghost.className = 'result-row result-row-ghost';
+  ghost.style.width = `${rowRect.width}px`;
+  ghost.style.top = `${rowRect.top}px`;
+  ghost.style.left = `${rowRect.left}px`;
+  document.body.appendChild(ghost);
+
+  rowDragState = {
+    row,
+    items,
+    ghost,
+    grabOffsetY: clientY - rowRect.top,
+    lastClientY: clientY,
+  };
+  row.classList.add('dragging');
+  document.addEventListener('pointermove', onRowDragMove);
+  document.addEventListener('pointerup', onRowDragEnd);
+  document.addEventListener('pointercancel', onRowDragEnd);
+  startRowDragAutoScroll();
 }
 
 function onRowDragMove(event) {

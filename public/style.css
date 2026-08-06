@@ -958,6 +958,11 @@ body {
   border-radius: 4px;
   background: var(--surface-alt);
   flex-shrink: 0;
+  /* Browsers natively support dragging an <img> via HTML5 drag-and-drop
+     — left unset, that would compete with our own pointer-based drag
+     on .result-play-target. */
+  -webkit-user-drag: none;
+  user-drag: none;
 }
 
 .result-meta {
@@ -989,29 +994,6 @@ body {
   margin-top: 2px;
 }
 
-/* Grip handle for drag-to-reorder — a separate, deliberately small
-   target from the play area so an accidental touch there can't start a
-   drag when the user only meant to tap and play. */
-.result-drag-handle {
-  display: flex;
-  align-items: center;
-  background: none;
-  border: none;
-  color: var(--text-dimmer);
-  padding: 4px;
-  cursor: grab;
-  flex-shrink: 0;
-  /* Without this, touch browsers treat a handle press as the start of a
-     page scroll gesture instead of handing pointer events to our own
-     drag logic. */
-  touch-action: none;
-}
-
-.result-drag-handle svg {
-  width: 16px;
-  height: 16px;
-}
-
 /* The floating .result-row-ghost is what visually represents the drag
    now — this becomes just a placeholder marking the row's current slot
    as it gets reordered underneath. */
@@ -1028,7 +1010,14 @@ body {
 }
 
 /* Thumb + title are the play target now — everything else lives behind
-   the "more" button's modal (see #row-actions-modal below). */
+   the "more" button's modal (see #row-actions-modal below). Also the
+   drag surface (tap plays, holding it down drags — see
+   attachRowDragOrTap): pan-y (not none) explicitly keeps normal
+   vertical scroll-by-swipe working here, since the JS only takes over
+   after a deliberate hold, not on every touch. touch-callout/user-select
+   suppress iOS's long-press callout (copy/save-image menu), which would
+   otherwise fire at the same time as — and visually compete with — our
+   own long-press drag. */
 .result-play-target {
   display: flex;
   align-items: center;
@@ -1036,6 +1025,9 @@ body {
   flex: 1;
   min-width: 0;
   cursor: pointer;
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .result-more-btn {
