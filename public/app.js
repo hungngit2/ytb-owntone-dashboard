@@ -580,20 +580,29 @@ function onRowDragMove(event) {
   const draggingRow = rowDragState.row;
   const y = event.clientY;
 
-  for (const row of list.children) {
-    if (row === draggingRow) {
-      continue;
-    }
+  // Recomputes the target slot from the cursor's current position among
+  // ALL other rows on every move, rather than only checking immediately
+  // adjacent siblings — a step-based "swap with whichever row you just
+  // crossed" approach only works if a pointermove event fires for every
+  // row boundary crossed, which a fast or coarse drag doesn't guarantee
+  // (confirmed live: it silently stalled after one swap on a quick
+  // drag). This way a single large jump still lands in the right place.
+  const others = [...list.children].filter((row) => row !== draggingRow);
+  let target = null;
+  for (const row of others) {
     const rect = row.getBoundingClientRect();
-    const midpoint = rect.top + rect.height / 2;
-    if (y < midpoint && row.previousElementSibling === draggingRow) {
-      list.insertBefore(draggingRow, row);
+    if (y < rect.top + rect.height / 2) {
+      target = row;
       break;
     }
-    if (y > midpoint && row.nextElementSibling === draggingRow) {
-      list.insertBefore(draggingRow, row.nextElementSibling);
-      break;
+  }
+
+  if (target) {
+    if (target !== draggingRow.nextElementSibling) {
+      list.insertBefore(draggingRow, target);
     }
+  } else if (draggingRow !== list.lastElementChild) {
+    list.appendChild(draggingRow);
   }
 }
 
