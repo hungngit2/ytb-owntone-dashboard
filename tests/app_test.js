@@ -14,6 +14,8 @@ const {
 
 assert.strictEqual(isYoutubeUrl('https://www.youtube.com/watch?v=abc123'), true, 'accepts watch url');
 assert.strictEqual(isYoutubeUrl('https://youtu.be/abc123'), true, 'accepts short url');
+assert.strictEqual(isYoutubeUrl('https://youtube.com/playlist?list=RDzcYiLOaYZ7E&playnext=1'), true, 'accepts playlist url');
+assert.strictEqual(isYoutubeUrl('https://music.youtube.com/playlist?list=RDzcYiLOaYZ7E'), true, 'accepts music subdomain url');
 assert.strictEqual(isYoutubeUrl('lofi hip hop radio'), false, 'rejects plain text');
 assert.strictEqual(isYoutubeUrl('https://vimeo.com/123'), false, 'rejects other domains');
 
@@ -38,6 +40,11 @@ assert.strictEqual(
   isYoutubeMixPlaylistUrl('https://www.youtube.com/watch?v=Bhg-Gw953b0&list=RDEMxGUZ2ZNtqwja6FDPezetCw&start_radio=1'),
   true,
   'accepts a Mix/Radio list (list id starts with RD)'
+);
+assert.strictEqual(
+  isYoutubeMixPlaylistUrl('https://youtube.com/playlist?list=RDzcYiLOaYZ7E&playnext=1'),
+  true,
+  'accepts a Mix/Radio list from a playlist URL'
 );
 assert.strictEqual(
   isYoutubeMixPlaylistUrl('https://www.youtube.com/playlist?list=PLWz5rJ2EKKc9CBxr3BVjPTPoDPLdPIFCE'),
@@ -68,6 +75,11 @@ assert.strictEqual(
   extractYoutubeVideoId('https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=RDdQw4w9WgXcQ&index=1'),
   'dQw4w9WgXcQ',
   'extracts id even with extra query params, so a watch url and a playlist-context url for the same video match'
+);
+assert.strictEqual(
+  extractYoutubeVideoId('https://youtube.com/playlist?list=RDzcYiLOaYZ7E&playnext=1'),
+  'zcYiLOaYZ7E',
+  'extracts seed video id from a mix playlist url'
 );
 assert.strictEqual(extractYoutubeVideoId(null), null, 'returns null for null input');
 assert.strictEqual(extractYoutubeVideoId('not a youtube url'), null, 'returns null when no id pattern matches');

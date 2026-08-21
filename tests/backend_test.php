@@ -24,6 +24,8 @@ assert_true(!is_private_local_ip('not-an-ip'), 'a non-IP string is not private (
 assert_true(is_youtube_url('https://www.youtube.com/watch?v=abc123'), 'accepts watch url');
 assert_true(is_youtube_url('https://youtu.be/abc123'), 'accepts short url');
 assert_true(is_youtube_url('https://youtube.com/shorts/abc123'), 'accepts shorts url');
+assert_true(is_youtube_url('https://youtube.com/playlist?list=RDzcYiLOaYZ7E&playnext=1'), 'accepts playlist url');
+assert_true(is_youtube_url('https://music.youtube.com/playlist?list=RDzcYiLOaYZ7E'), 'accepts music subdomain url');
 assert_true(!is_youtube_url('not a url'), 'rejects plain text');
 assert_true(!is_youtube_url('https://vimeo.com/123'), 'rejects other domains');
 
@@ -68,6 +70,7 @@ assert_true(str_contains($seekPlayCmd, 'ffmpeg -re -ss 30 -i'), 'seek play cmd p
 assert_true(extract_youtube_video_id('https://www.youtube.com/watch?v=dQw4w9WgXcQ') === 'dQw4w9WgXcQ', 'extracts id from a watch url');
 assert_true(extract_youtube_video_id('https://youtu.be/dQw4w9WgXcQ') === 'dQw4w9WgXcQ', 'extracts id from a short url');
 assert_true(extract_youtube_video_id('https://youtube.com/shorts/dQw4w9WgXcQ') === 'dQw4w9WgXcQ', 'extracts id from a shorts url');
+assert_true(extract_youtube_video_id('https://youtube.com/playlist?list=RDzcYiLOaYZ7E&playnext=1') === 'zcYiLOaYZ7E', 'extracts seed video id from a mix playlist url');
 assert_true(extract_youtube_video_id('not a youtube url') === null, 'returns null when no id pattern matches');
 
 assert_true(audio_cache_path('https://youtu.be/dQw4w9WgXcQ', '/tmp/cache') === '/tmp/cache/dQw4w9WgXcQ.audio', 'audio_cache_path builds a path keyed by video id');

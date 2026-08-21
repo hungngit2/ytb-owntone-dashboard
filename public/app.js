@@ -59,7 +59,7 @@ function isIOS(userAgent, platform, maxTouchPoints) {
 }
 
 function isYoutubeUrl(input) {
-  return /^https?:\/\/(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)/i.test(
+  return /^https?:\/\/(?:(www|music|m)\.)?(?:youtube\.com\/(?:watch\?|playlist\?|shorts\/)|youtu\.be\/)/i.test(
     input.trim()
   );
 }
@@ -99,7 +99,12 @@ function extractYoutubeVideoId(url) {
   if (!url) {
     return null;
   }
-  const patterns = [/[?&]v=([a-zA-Z0-9_-]{11})/, /youtu\.be\/([a-zA-Z0-9_-]{11})/, /youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/];
+  const patterns = [
+    /[?&]v=([a-zA-Z0-9_-]{11})/,
+    /youtu\.be\/([a-zA-Z0-9_-]{11})/,
+    /youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/,
+    /[?&]list=RD([a-zA-Z0-9_-]{11})/i
+  ];
   for (const pattern of patterns) {
     const match = pattern.exec(url);
     if (match) {
@@ -979,6 +984,21 @@ async function runPlaylistImport(url) {
     cacheLastSearch(searchResults);
     document.getElementById('search-input').value = '';
   } catch (err) {
+    try {
+      const res = await fetch('backend.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `action=resolve_mix_playlist&url=${encodeURIComponent(url)}`,
+      });
+      const data = await res.json();
+      if (data && data.status === 'ok' && Array.isArray(data.items) && data.items.length > 0) {
+        searchResults = data.items;
+        renderResults();
+        cacheLastSearch(searchResults);
+        document.getElementById('search-input').value = '';
+        return;
+      }
+    } catch (_) {}
     showError(err.message || 'Playlist request failed');
   }
 }
@@ -1030,9 +1050,21 @@ async function resolveYoutubeMixPlaylist(url) {
       cacheLastSearch(searchResults);
       document.getElementById('search-input').value = '';
     } else {
+      const seedVideoId = extractYoutubeVideoId(url);
+      if (seedVideoId) {
+        const seedUrl = `https://www.youtube.com/watch?v=${seedVideoId}`;
+        await resolveUrlToResult(seedUrl);
+        return;
+      }
       showError((data && data.message) || 'Could not resolve this mix/radio playlist');
     }
   } catch (err) {
+    const seedVideoId = extractYoutubeVideoId(url);
+    if (seedVideoId) {
+      const seedUrl = `https://www.youtube.com/watch?v=${seedVideoId}`;
+      await resolveUrlToResult(seedUrl);
+      return;
+    }
     showError('Mix playlist request failed');
   }
 }

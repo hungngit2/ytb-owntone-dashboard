@@ -176,7 +176,7 @@ function enforce_dashboard_auth(): void
 function is_youtube_url(string $url): bool
 {
     return (bool) preg_match(
-        '#^https?://(www\.)?(youtube\.com/watch\?v=|youtu\.be/|youtube\.com/shorts/)#i',
+        '#^https?://(?:(www|music|m)\.)?(?:youtube\.com/(?:watch\?|playlist\?|shorts/)|youtu\.be/)#i',
         trim($url)
     );
 }
@@ -187,6 +187,7 @@ function extract_youtube_video_id(string $url): ?string
         '/[?&]v=([a-zA-Z0-9_-]{11})/',
         '#youtu\.be/([a-zA-Z0-9_-]{11})#',
         '#youtube\.com/shorts/([a-zA-Z0-9_-]{11})#',
+        '/[?&]list=RD([a-zA-Z0-9_-]{11})/i',
     ];
     foreach ($patterns as $pattern) {
         if (preg_match($pattern, $url, $matches)) {
