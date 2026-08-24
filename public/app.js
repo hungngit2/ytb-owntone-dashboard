@@ -958,6 +958,7 @@ async function runSearch(query) {
     renderResults();
     cacheLastSearch(searchResults);
   } catch (err) {
+    renderResults();
     showError(err.message || 'Search request failed');
   }
 }
@@ -971,6 +972,7 @@ async function runPlaylistImport(url) {
 
   const playlistId = extractYoutubePlaylistId(url);
   if (!playlistId) {
+    renderResults();
     showError('Could not find a playlist in that link');
     return;
   }
@@ -978,6 +980,7 @@ async function runPlaylistImport(url) {
   try {
     searchResults = await fetchYoutubePlaylistItems(playlistId);
     if (searchResults.length === 0) {
+      renderResults();
       showError('Playlist is empty, or none of its videos are available');
       return;
     }
@@ -1000,6 +1003,7 @@ async function runPlaylistImport(url) {
         return;
       }
     } catch (_) {}
+    renderResults();
     showError(err.message || 'Playlist request failed');
   }
 }
@@ -1057,6 +1061,7 @@ async function resolveYoutubeMixPlaylist(url) {
         await resolveUrlToResult(seedUrl);
         return;
       }
+      renderResults();
       showError((data && data.message) || 'Could not resolve this mix/radio playlist');
     }
   } catch (err) {
@@ -1066,6 +1071,7 @@ async function resolveYoutubeMixPlaylist(url) {
       await resolveUrlToResult(seedUrl);
       return;
     }
+    renderResults();
     showError('Mix playlist request failed');
   }
 }
@@ -1753,13 +1759,54 @@ async function removeFromPlaylist(webpageUrl, triggerBtn) {
   }
 }
 
+function showToast(message, type = 'error') {
+  if (typeof document === 'undefined') {
+    return;
+  }
+  let container = document.getElementById('toast-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'toast-container';
+    container.className = 'toast-container';
+    document.body.appendChild(container);
+  }
+
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+
+  const iconSpan = document.createElement('span');
+  iconSpan.className = 'toast-icon';
+  iconSpan.innerHTML =
+    type === 'error'
+      ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>'
+      : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>';
+
+  const textSpan = document.createElement('span');
+  textSpan.className = 'toast-text';
+  textSpan.textContent = message;
+
+  toast.append(iconSpan, textSpan);
+  container.appendChild(toast);
+
+  requestAnimationFrame(() => {
+    toast.classList.add('visible');
+  });
+
+  const removeToast = () => {
+    toast.classList.remove('visible');
+    toast.addEventListener('transitionend', () => toast.remove(), { once: true });
+    setTimeout(() => toast.remove(), 400);
+  };
+
+  const timer = setTimeout(removeToast, 3500);
+  toast.addEventListener('click', () => {
+    clearTimeout(timer);
+    removeToast();
+  });
+}
+
 function showError(message) {
-  const list = document.getElementById('results-list');
-  list.innerHTML = '';
-  const errorEl = document.createElement('div');
-  errorEl.className = 'result-error';
-  errorEl.textContent = message;
-  list.appendChild(errorEl);
+  showToast(message, 'error');
 }
 
 function showLoading(message) {
