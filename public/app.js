@@ -3066,6 +3066,22 @@ if (typeof document !== 'undefined') {
     }
   });
 
+  window.addEventListener('keydown', (event) => {
+    if (event.key === 'MediaTrackNext' || event.code === 'MediaTrackNext') {
+      event.preventDefault();
+      playRelative(1);
+    } else if (event.key === 'MediaTrackPrevious' || event.code === 'MediaTrackPrevious') {
+      event.preventDefault();
+      playRelative(-1);
+    } else if (event.key === 'MediaPlayPause' || event.code === 'MediaPlayPause') {
+      event.preventDefault();
+      document.getElementById('play-pause-btn').click();
+    } else if (event.key === 'MediaStop' || event.code === 'MediaStop') {
+      event.preventDefault();
+      document.getElementById('stop-btn').click();
+    }
+  });
+
   playMode = localStorage.getItem(LS_KEYS.playMode) || 'owntone';
   if (playMode !== 'local' && playMode !== 'owntone') {
     playMode = 'owntone';
