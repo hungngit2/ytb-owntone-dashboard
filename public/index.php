@@ -60,7 +60,7 @@ enforce_dashboard_auth();
             </span>
           </button>
         </div>
-        <audio id="browser-stream-audio" preload="none"></audio>
+        <audio id="browser-stream-audio" playsinline></audio>
 
         <div class="hero-progress">
           <div class="progress-times">

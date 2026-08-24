@@ -2154,6 +2154,9 @@ async function playLocalQueueItem(items, index, triggerBtn) {
     localQueue = { items, current_index: index, progress_seconds: 0 };
     saveLocalQueue();
 
+    clearInterval(progressTickTimer);
+    updateProgressDisplay(0, 0);
+
     audio.src = `backend.php?action=stream_redirect&url=${encodeURIComponent(item.webpage_url)}`;
     audio.volume = Number(document.getElementById('volume-slider').value) / 100;
     // stream-btn's "Listen in browser" feature shares this same <audio>
