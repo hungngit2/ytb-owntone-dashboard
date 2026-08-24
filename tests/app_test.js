@@ -10,6 +10,7 @@ const {
   mapQueueResponse,
   sanitizeVolume,
   insertAfterIndex,
+  nextLocalQueueIndex,
 } = require('../public/app.js');
 
 assert.strictEqual(isYoutubeUrl('https://www.youtube.com/watch?v=abc123'), true, 'accepts watch url');
@@ -125,5 +126,14 @@ assert.deepStrictEqual(insertAfterIndex(['a', 'b', 'c'], 2, 'X'), ['a', 'b', 'c'
 assert.deepStrictEqual(insertAfterIndex([], -1, 'X'), ['X'], 'insertAfterIndex inserts at the front of an empty queue (nothing currently playing)');
 assert.deepStrictEqual(insertAfterIndex(['a', 'b'], -1, 'X'), ['X', 'a', 'b'], 'insertAfterIndex clamps a negative afterIndex to the front');
 assert.deepStrictEqual(insertAfterIndex(['a', 'b'], 99, 'X'), ['a', 'b', 'X'], 'insertAfterIndex clamps an out-of-range afterIndex to the end');
+
+assert.strictEqual(nextLocalQueueIndex(0, 3, false, 'off'), 1, 'nextLocalQueueIndex moves to next index sequentially');
+assert.strictEqual(nextLocalQueueIndex(2, 3, false, 'off'), null, 'nextLocalQueueIndex returns null at the end with repeat off');
+assert.strictEqual(nextLocalQueueIndex(2, 3, false, 'all'), 0, 'nextLocalQueueIndex wraps to 0 at the end with repeat all');
+assert.strictEqual(nextLocalQueueIndex(1, 3, false, 'one'), 1, 'nextLocalQueueIndex repeats the same index with repeat one');
+assert.strictEqual(nextLocalQueueIndex(-1, 3, false, 'off'), null, 'nextLocalQueueIndex returns null for negative index');
+assert.strictEqual(nextLocalQueueIndex(0, 0, false, 'off'), null, 'nextLocalQueueIndex returns null for empty queue');
+const shuffled = nextLocalQueueIndex(0, 3, true, 'off');
+assert.strictEqual(shuffled !== 0 && (shuffled === 1 || shuffled === 2), true, 'nextLocalQueueIndex picks a different random index in shuffle mode');
 
 console.log('All app.js helper tests passed.');
