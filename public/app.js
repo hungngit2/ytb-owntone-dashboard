@@ -2257,6 +2257,10 @@ async function playLocalQueueItem(items, index, triggerBtn) {
     applyLocalPlayerState(true, audio.currentTime || 0, Number.isFinite(audio.duration) ? audio.duration : 0);
     document.getElementById('search-input').value = '';
   } catch (err) {
+    if (err && err.name === 'AbortError') {
+      // AbortError happens when a play() promise is superseded by a subsequent load/play
+      return;
+    }
     titleEl.classList.remove('loading');
     document.getElementById('disc').classList.remove('loading');
     showError('Could not play direct stream');
@@ -3050,6 +3054,23 @@ if (typeof document !== 'undefined') {
   localAudio.addEventListener('playing', () => {
     if (isLocalMode()) {
       document.getElementById('disc').classList.remove('loading');
+    }
+  });
+  localAudio.addEventListener('stalled', () => {
+    if (isLocalMode() && lastKnownIsPlaying) {
+      document.getElementById('disc').classList.add('loading');
+    }
+  });
+  localAudio.addEventListener('error', () => {
+    if (!isLocalMode() || !localAudio.src) {
+      return;
+    }
+    document.getElementById('disc').classList.remove('loading');
+    document.getElementById('now-title').classList.remove('loading');
+    if (autoAdvanceEnabled && localQueue.items.length > 1) {
+      handleLocalTrackEnded();
+    } else {
+      applyLocalPlayerState(false, 0, 0);
     }
   });
   // Immediate saves at the two moments most likely to precede a reload —

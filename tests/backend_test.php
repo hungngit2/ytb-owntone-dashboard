@@ -386,6 +386,16 @@ $audioOnlyFormats = [['url' => 'https://cdn.example/only-audio.m4a', 'ext' => 'm
 assert_true(parse_stream_variants_from_formats($audioOnlyFormats)['progressive'] === [], 'progressive is empty when no format has both video and audio (matches a real low-res video: only itag 18 at 240p was progressive)');
 assert_true(parse_stream_variants_from_formats([])['audio'] === null, 'audio is null when there are no formats at all');
 
+$opusOnlyWithProgressive = [
+    ['url' => 'https://cdn.example/audio-opus.webm', 'ext' => 'webm', 'vcodec' => 'none', 'acodec' => 'opus', 'abr' => 160],
+    ['url' => 'https://cdn.example/progressive-360p.mp4', 'ext' => 'mp4', 'vcodec' => 'avc1', 'acodec' => 'mp4a.40.2', 'height' => 360, 'tbr' => 400],
+    ['url' => 'https://cdn.example/progressive-720p.mp4', 'ext' => 'mp4', 'vcodec' => 'avc1', 'acodec' => 'mp4a.40.2', 'height' => 720, 'tbr' => 900],
+];
+assert_true(
+    parse_stream_variants_from_formats($opusOnlyWithProgressive)['audio'] === 'https://cdn.example/progressive-360p.mp4',
+    'falls back to lowest progressive MP4 (AAC) when only Opus/WebM audio is present (for iOS Safari compatibility)'
+);
+
 $futureExpireVideoUrl = 'https://cdn.example/aaa.mp4?expire=' . ($now + 3600) . '&dur=19.063';
 $pastExpireVideoUrl = 'https://cdn.example/aaa-360p.mp4?expire=' . ($now - 3600) . '&dur=19.063';
 

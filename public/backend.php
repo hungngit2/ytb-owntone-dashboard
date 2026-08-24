@@ -1348,6 +1348,13 @@ function parse_stream_variants_from_formats(array $formats): array
         return ['height' => $entry['height'], 'url' => $entry['url']];
     }, $progressiveByHeight));
 
+    // If no M4A audio was found, prefer the lowest-resolution progressive MP4 (AAC audio)
+    // over an Opus/WebM stream, because iOS Safari WebKit cannot decode WebM/Opus in <audio> elements.
+    if (!$bestAudioIsM4a && !empty($progressive)) {
+        $lowestProgressive = end($progressive);
+        $bestAudioUrl = $lowestProgressive['url'];
+    }
+
     return ['audio' => $bestAudioUrl, 'progressive' => $progressive];
 }
 
