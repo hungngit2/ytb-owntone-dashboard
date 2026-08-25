@@ -11,6 +11,9 @@ const {
   sanitizeVolume,
   insertAfterIndex,
   nextLocalQueueIndex,
+  parseDurationStringToSeconds,
+  getLocalTrackDurationSeconds,
+  formatTime,
 } = require('../public/app.js');
 
 assert.strictEqual(isYoutubeUrl('https://www.youtube.com/watch?v=abc123'), true, 'accepts watch url');
@@ -135,5 +138,26 @@ assert.strictEqual(nextLocalQueueIndex(-1, 3, false, 'off'), null, 'nextLocalQue
 assert.strictEqual(nextLocalQueueIndex(0, 0, false, 'off'), null, 'nextLocalQueueIndex returns null for empty queue');
 const shuffled = nextLocalQueueIndex(0, 3, true, 'off');
 assert.strictEqual(shuffled !== 0 && (shuffled === 1 || shuffled === 2), true, 'nextLocalQueueIndex picks a different random index in shuffle mode');
+
+// Duration helper tests
+assert.strictEqual(parseDurationStringToSeconds('3:45'), 225, 'parses M:SS to seconds');
+assert.strictEqual(parseDurationStringToSeconds('0:45'), 45, 'parses 0:SS to seconds');
+assert.strictEqual(parseDurationStringToSeconds('65:30'), 3930, 'parses >60 minute M:SS to seconds');
+assert.strictEqual(parseDurationStringToSeconds('1:05:30'), 3930, 'parses H:MM:SS to seconds');
+assert.strictEqual(parseDurationStringToSeconds('45'), 45, 'parses single number as seconds');
+assert.strictEqual(parseDurationStringToSeconds(''), 0, 'returns 0 for empty string');
+assert.strictEqual(parseDurationStringToSeconds(null), 0, 'returns 0 for null');
+assert.strictEqual(parseDurationStringToSeconds(undefined), 0, 'returns 0 for undefined');
+assert.strictEqual(parseDurationStringToSeconds('invalid:str'), 0, 'returns 0 for invalid string');
+assert.strictEqual(parseDurationStringToSeconds('-5:10'), 0, 'returns 0 for negative values');
+
+assert.strictEqual(formatTime(225), '3:45', 'formats seconds to M:SS');
+assert.strictEqual(formatTime(45), '0:45', 'formats <60 seconds with leading zero');
+assert.strictEqual(formatTime(3930), '65:30', 'formats >60 minutes');
+assert.strictEqual(formatTime(0), '0:00', 'formats 0 seconds');
+assert.strictEqual(formatTime(-10), '0:00', 'formats negative seconds as 0:00');
+assert.strictEqual(formatTime(NaN), '0:00', 'formats NaN as 0:00');
+assert.strictEqual(formatTime(Infinity), '0:00', 'formats Infinity as 0:00');
+assert.strictEqual(formatTime(225.8), '3:45', 'floats are floored');
 
 console.log('All app.js helper tests passed.');

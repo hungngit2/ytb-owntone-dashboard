@@ -140,6 +140,62 @@ function mapQueueResponse(queue, currentItemId) {
   return { title: current ? current.title : '', isFifo: Boolean(current) && current.data_kind === 'pipe' };
 }
 
+function parseDurationStringToSeconds(str) {
+  if (!str || typeof str !== 'string') {
+    return 0;
+  }
+  const parts = str.trim().split(':').map((p) => parseInt(p, 10));
+  if (parts.some((p) => isNaN(p) || p < 0)) {
+    return 0;
+  }
+  if (parts.length === 1) {
+    return parts[0];
+  }
+  if (parts.length === 2) {
+    return parts[0] * 60 + parts[1];
+  }
+  if (parts.length === 3) {
+    return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  }
+  return 0;
+}
+
+function getLocalTrackDurationSeconds() {
+  const item = currentQueueItem();
+  if (item) {
+    if (item.duration_string) {
+      const fromStr = parseDurationStringToSeconds(item.duration_string);
+      if (fromStr > 0) {
+        return fromStr;
+      }
+    }
+    if (Number.isFinite(item.duration_seconds) && item.duration_seconds > 0) {
+      return item.duration_seconds;
+    }
+    if (Number.isFinite(item.item_length_ms) && item.item_length_ms > 0) {
+      return Math.floor(item.item_length_ms / 1000);
+    }
+  }
+  if (typeof currentTrackInfo !== 'undefined' && currentTrackInfo) {
+    if (currentTrackInfo.durationString) {
+      const fromStr = parseDurationStringToSeconds(currentTrackInfo.durationString);
+      if (fromStr > 0) {
+        return fromStr;
+      }
+    }
+    if (Number.isFinite(currentTrackInfo.durationSeconds) && currentTrackInfo.durationSeconds > 0) {
+      return currentTrackInfo.durationSeconds;
+    }
+  }
+  if (typeof document !== 'undefined') {
+    const audio = document.getElementById('browser-stream-audio');
+    if (audio && Number.isFinite(audio.duration) && audio.duration > 0) {
+      return audio.duration;
+    }
+  }
+  return 0;
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     isIOS,
@@ -155,6 +211,9 @@ if (typeof module !== 'undefined' && module.exports) {
     nextLocalQueueIndex,
     clearSearchResults,
     getSearchResults: () => searchResults,
+    parseDurationStringToSeconds,
+    getLocalTrackDurationSeconds,
+    formatTime,
   };
 }
 
@@ -1018,6 +1077,17 @@ async function resolveUrlToResult(url) {
     const data = await res.json();
 
     if (data && data.webpage_url) {
+      if (!data.duration_string && typeof YOUTUBE_API_KEY !== 'undefined' && YOUTUBE_API_KEY) {
+        const videoId = extractYoutubeVideoId(data.webpage_url);
+        if (videoId) {
+          try {
+            const durationById = await fetchDurationsById([videoId]);
+            if (durationById[videoId]) {
+              data.duration_string = durationById[videoId];
+            }
+          } catch (_) {}
+        }
+      }
       searchResults = [data];
       document.getElementById('search-input').value = '';
       if (currentView !== 'search') {
@@ -2011,7 +2081,7 @@ function setupMediaSessionHandlers() {
       const audio = document.getElementById('browser-stream-audio');
       if (audio.src && audio.paused) {
         audio.play().then(() => {
-          applyLocalPlayerState(true, audio.currentTime || 0, Number.isFinite(audio.duration) ? audio.duration : 0);
+          applyLocalPlayerState(true, audio.currentTime || 0, getLocalTrackDurationSeconds());
         }).catch(() => {});
         return;
       }
@@ -2023,7 +2093,7 @@ function setupMediaSessionHandlers() {
       const audio = document.getElementById('browser-stream-audio');
       if (audio.src && !audio.paused) {
         audio.pause();
-        applyLocalPlayerState(false, audio.currentTime || 0, Number.isFinite(audio.duration) ? audio.duration : 0);
+        applyLocalPlayerState(false, audio.currentTime || 0, getLocalTrackDurationSeconds());
         return;
       }
     }
@@ -2231,7 +2301,10 @@ function updateLocalProgressFromAudio() {
     return;
   }
   syncedProgressSeconds = audio.currentTime || 0;
-  if (Number.isFinite(audio.duration) && audio.duration > 0) {
+  const trackDuration = getLocalTrackDurationSeconds();
+  if (trackDuration > 0) {
+    syncedDurationSeconds = trackDuration;
+  } else if (Number.isFinite(audio.duration) && audio.duration > 0) {
     syncedDurationSeconds = audio.duration;
   }
   progressSyncedAtMs = Date.now();
@@ -2272,6 +2345,7 @@ async function playLocalQueueItem(items, index, triggerBtn) {
 
   const item = items[index];
   const audio = document.getElementById('browser-stream-audio');
+  const itemDuration = parseDurationStringToSeconds(item.duration_string);
 
   try {
     currentTrackInfo = {
@@ -2279,6 +2353,8 @@ async function playLocalQueueItem(items, index, triggerBtn) {
       thumbnail: item.thumbnail || null,
       channel: item.channel || null,
       webpageUrl: item.webpage_url,
+      durationString: item.duration_string || null,
+      durationSeconds: itemDuration || null,
     };
     localQueue = { items, current_index: index, progress_seconds: 0 };
     saveLocalQueue();
@@ -2287,7 +2363,7 @@ async function playLocalQueueItem(items, index, triggerBtn) {
     syncMediaSessionPlaybackState(true);
 
     clearInterval(progressTickTimer);
-    updateProgressDisplay(0, 0);
+    updateProgressDisplay(0, itemDuration);
 
     audio.src = `backend.php?action=stream_redirect&url=${encodeURIComponent(item.webpage_url)}`;
     audio.volume = Number(document.getElementById('volume-slider').value) / 100;
@@ -2301,7 +2377,7 @@ async function playLocalQueueItem(items, index, triggerBtn) {
     titleEl.classList.remove('loading');
     document.getElementById('disc').classList.remove('loading');
     renderNowPlaying();
-    applyLocalPlayerState(true, audio.currentTime || 0, Number.isFinite(audio.duration) ? audio.duration : 0);
+    applyLocalPlayerState(true, audio.currentTime || 0, getLocalTrackDurationSeconds());
     document.getElementById('search-input').value = '';
   } catch (err) {
     if (err && err.name === 'AbortError') {
@@ -2666,12 +2742,14 @@ function maybePrefetchNextStream(progressSeconds, durationSeconds) {
 async function seekTo(targetSeconds) {
   if (isLocalMode()) {
     const audio = document.getElementById('browser-stream-audio');
-    if (!audio.src || !Number.isFinite(audio.duration) || audio.duration <= 0) {
+    const duration = getLocalTrackDurationSeconds();
+    if (!audio.src || (duration <= 0 && (!Number.isFinite(audio.duration) || audio.duration <= 0))) {
       return;
     }
-    const clamped = Math.max(0, Math.min(targetSeconds, audio.duration));
+    const maxDuration = duration > 0 ? duration : audio.duration;
+    const clamped = Math.max(0, Math.min(targetSeconds, maxDuration));
     audio.currentTime = clamped;
-    applyLocalPlayerState(!audio.paused, clamped, audio.duration);
+    applyLocalPlayerState(!audio.paused, clamped, maxDuration);
     saveLocalProgress(clamped);
     return;
   }
@@ -2703,8 +2781,11 @@ async function seekTo(targetSeconds) {
 }
 
 function formatTime(totalSeconds) {
+  if (!Number.isFinite(totalSeconds) || totalSeconds < 0) {
+    return '0:00';
+  }
   const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
+  const seconds = Math.floor(totalSeconds % 60);
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
@@ -2851,11 +2932,11 @@ if (typeof document !== 'undefined') {
       }
       if (lastKnownIsPlaying) {
         audio.pause();
-        applyLocalPlayerState(false, audio.currentTime || 0, Number.isFinite(audio.duration) ? audio.duration : 0);
+        applyLocalPlayerState(false, audio.currentTime || 0, getLocalTrackDurationSeconds());
       } else {
         audio.play()
           .then(() => {
-            applyLocalPlayerState(true, audio.currentTime || 0, Number.isFinite(audio.duration) ? audio.duration : 0);
+            applyLocalPlayerState(true, audio.currentTime || 0, getLocalTrackDurationSeconds());
           })
           .catch(() => showError('Could not resume playback'));
       }
@@ -2895,7 +2976,7 @@ if (typeof document !== 'undefined') {
     const rect = track.getBoundingClientRect();
     const ratio = Math.max(0, Math.min((event.clientX - rect.left) / rect.width, 1));
     const duration = isLocalMode()
-      ? Number(document.getElementById('browser-stream-audio').duration) || syncedDurationSeconds
+      ? (getLocalTrackDurationSeconds() || syncedDurationSeconds)
       : syncedDurationSeconds;
     if (duration <= 0) {
       return;
@@ -3181,11 +3262,14 @@ function resumeLocalPlaybackFromStorage() {
   }
 
   const resumeAt = Number(localQueue.progress_seconds) || 0;
+  const itemDuration = parseDurationStringToSeconds(item.duration_string);
   currentTrackInfo = {
     title: item.title || null,
     thumbnail: item.thumbnail || null,
     channel: item.channel || null,
     webpageUrl: item.webpage_url,
+    durationString: item.duration_string || null,
+    durationSeconds: itemDuration || null,
   };
 
   const audio = document.getElementById('browser-stream-audio');
@@ -3195,10 +3279,11 @@ function resumeLocalPlaybackFromStorage() {
 
   const onReady = () => {
     audio.removeEventListener('loadedmetadata', onReady);
-    if (resumeAt > 0 && resumeAt < (audio.duration || Infinity)) {
+    const duration = getLocalTrackDurationSeconds();
+    if (resumeAt > 0 && resumeAt < (duration || audio.duration || Infinity)) {
       audio.currentTime = resumeAt;
     }
-    applyLocalPlayerState(false, audio.currentTime || 0, Number.isFinite(audio.duration) ? audio.duration : 0);
+    applyLocalPlayerState(false, audio.currentTime || 0, duration);
     // Best-effort — browsers routinely block this without a user gesture,
     // which just leaves it paused at the right position, exactly as intended.
     audio.play().catch(() => {});
@@ -3206,4 +3291,5 @@ function resumeLocalPlaybackFromStorage() {
   audio.addEventListener('loadedmetadata', onReady);
 
   renderNowPlaying();
+  updateProgressDisplay(resumeAt, itemDuration);
 }

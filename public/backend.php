@@ -940,11 +940,18 @@ function handle_resolve_url(string $url): void
     }
 
     $oembed = fetch_youtube_oembed($url);
+    $streamUrl = get_cached_stream_url($url);
+    $durationSeconds = $streamUrl !== null ? extract_stream_url_duration_seconds($streamUrl) : 0.0;
+    $durationString = '';
+    if ($durationSeconds > 0) {
+        $sec = (int) round($durationSeconds);
+        $durationString = sprintf('%d:%02d', intdiv($sec, 60), $sec % 60);
+    }
 
     echo json_encode([
         'title' => $oembed['title'] ?? $url,
         'webpage_url' => $url,
-        'duration_string' => '',
+        'duration_string' => $durationString,
         'thumbnail' => $oembed['thumbnail_url'] ?? '',
         'channel' => $oembed['author_name'] ?? '',
     ]);
