@@ -160,8 +160,8 @@ function parseDurationStringToSeconds(str) {
   return 0;
 }
 
-function getLocalTrackDurationSeconds() {
-  const item = currentQueueItem();
+function getTrackDurationSeconds() {
+  const item = typeof currentQueueItem === 'function' ? currentQueueItem() : null;
   if (item) {
     if (item.duration_string) {
       const fromStr = parseDurationStringToSeconds(item.duration_string);
@@ -187,7 +187,33 @@ function getLocalTrackDurationSeconds() {
       return currentTrackInfo.durationSeconds;
     }
   }
-  if (typeof document !== 'undefined') {
+  if (typeof nowPlayingVideoId === 'function') {
+    const playingId = nowPlayingVideoId();
+    if (playingId) {
+      const queue = (typeof isLocalMode === 'function' && isLocalMode()) ? localQueue : serverQueue;
+      const foundInQueue = (queue && Array.isArray(queue.items) ? queue.items : []).find(
+        (i) => typeof extractYoutubeVideoId === 'function' && extractYoutubeVideoId(i.webpage_url) === playingId
+      );
+      if (foundInQueue && foundInQueue.duration_string) {
+        const fromStr = parseDurationStringToSeconds(foundInQueue.duration_string);
+        if (fromStr > 0) {
+          return fromStr;
+        }
+      }
+      if (typeof activeItems === 'function') {
+        const foundInActive = activeItems().find(
+          (i) => typeof extractYoutubeVideoId === 'function' && extractYoutubeVideoId(i.webpage_url) === playingId
+        );
+        if (foundInActive && foundInActive.duration_string) {
+          const fromStr = parseDurationStringToSeconds(foundInActive.duration_string);
+          if (fromStr > 0) {
+            return fromStr;
+          }
+        }
+      }
+    }
+  }
+  if (typeof isLocalMode === 'function' && isLocalMode() && typeof document !== 'undefined') {
     const audio = document.getElementById('browser-stream-audio');
     if (audio && Number.isFinite(audio.duration) && audio.duration > 0) {
       return audio.duration;
@@ -196,14 +222,18 @@ function getLocalTrackDurationSeconds() {
   return 0;
 }
 
+function getLocalTrackDurationSeconds() {
+  return getTrackDurationSeconds();
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     isIOS,
     isYoutubeUrl,
+    extractYoutubeVideoId,
+    extractYoutubePlaylistId,
     isYoutubePlaylistUrl,
     isYoutubeMixPlaylistUrl,
-    extractYoutubePlaylistId,
-    extractYoutubeVideoId,
     mapPlayerResponse,
     mapQueueResponse,
     sanitizeVolume,
@@ -212,6 +242,7 @@ if (typeof module !== 'undefined' && module.exports) {
     clearSearchResults,
     getSearchResults: () => searchResults,
     parseDurationStringToSeconds,
+    getTrackDurationSeconds,
     getLocalTrackDurationSeconds,
     formatTime,
   };
@@ -862,8 +893,10 @@ function parseIso8601Duration(iso) {
   const hours = parseInt(match[1] || '0', 10);
   const minutes = parseInt(match[2] || '0', 10);
   const seconds = parseInt(match[3] || '0', 10);
-  const totalMinutes = hours * 60 + minutes;
-  return `${totalMinutes}:${String(seconds).padStart(2, '0')}`;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
 // Batches videos.list calls in groups of 50 (the API's per-request cap on
@@ -2481,11 +2514,14 @@ async function playQueueItem(items, index, triggerBtn) {
       return;
     }
 
+    const itemDuration = parseDurationStringToSeconds(items[index].duration_string);
     currentTrackInfo = {
       title: data.title || null,
       thumbnail: data.thumbnail || null,
       channel: data.channel || null,
       webpageUrl: items[index].webpage_url,
+      durationString: items[index].duration_string || null,
+      durationSeconds: itemDuration || null,
     };
     // Set immediately rather than waiting for the next websocket sync, so
     // highlight/prev/next reflect this play right away.
@@ -2622,7 +2658,9 @@ function applyPlayerState(player, queue) {
     reflectVolumeUI(player.volume);
   }
 
-  startProgressTicker(player.isPlaying, player.progressSeconds + progressOffsetSeconds, player.durationSeconds);
+  const metaDuration = getTrackDurationSeconds();
+  const effectiveDuration = metaDuration > 0 ? metaDuration : player.durationSeconds;
+  startProgressTicker(player.isPlaying, player.progressSeconds + progressOffsetSeconds, effectiveDuration);
 }
 
 // Single place that keeps the slider, label, and mute icon in sync,
@@ -2754,14 +2792,15 @@ async function seekTo(targetSeconds) {
     return;
   }
 
-  if (!serverQueue.seekable || syncedDurationSeconds <= 0) {
+  const duration = getTrackDurationSeconds() || syncedDurationSeconds;
+  if (!serverQueue.seekable || duration <= 0) {
     return;
   }
-  const clamped = Math.max(0, Math.min(targetSeconds, syncedDurationSeconds));
+  const clamped = Math.max(0, Math.min(targetSeconds, duration));
 
   // Reflect the drag immediately rather than waiting for the backend
   // round-trip (which restarts the pipe from the seeked offset).
-  startProgressTicker(lastKnownIsPlaying, clamped, syncedDurationSeconds);
+  startProgressTicker(lastKnownIsPlaying, clamped, duration);
 
   try {
     const res = await fetch('backend.php', {
@@ -2784,8 +2823,13 @@ function formatTime(totalSeconds) {
   if (!Number.isFinite(totalSeconds) || totalSeconds < 0) {
     return '0:00';
   }
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = Math.floor(totalSeconds % 60);
+  const totalSec = Math.floor(totalSeconds);
+  const hours = Math.floor(totalSec / 3600);
+  const minutes = Math.floor((totalSec % 3600) / 60);
+  const seconds = totalSec % 60;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
@@ -2975,9 +3019,7 @@ if (typeof document !== 'undefined') {
     }
     const rect = track.getBoundingClientRect();
     const ratio = Math.max(0, Math.min((event.clientX - rect.left) / rect.width, 1));
-    const duration = isLocalMode()
-      ? (getLocalTrackDurationSeconds() || syncedDurationSeconds)
-      : syncedDurationSeconds;
+    const duration = getTrackDurationSeconds() || syncedDurationSeconds;
     if (duration <= 0) {
       return;
     }

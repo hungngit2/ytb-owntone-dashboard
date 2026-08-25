@@ -945,7 +945,12 @@ function handle_resolve_url(string $url): void
     $durationString = '';
     if ($durationSeconds > 0) {
         $sec = (int) round($durationSeconds);
-        $durationString = sprintf('%d:%02d', intdiv($sec, 60), $sec % 60);
+        $hours = intdiv($sec, 3600);
+        $minutes = intdiv($sec % 3600, 60);
+        $seconds = $sec % 60;
+        $durationString = $hours > 0
+            ? sprintf('%d:%02d:%02d', $hours, $minutes, $seconds)
+            : sprintf('%d:%02d', $minutes, $seconds);
     }
 
     echo json_encode([
@@ -1158,15 +1163,22 @@ function handle_resolve_mix_playlist(string $url): void
         }
 
         $durationSeconds = (int) ($entry['duration'] ?? 0);
+        $durationString = '';
+        if ($durationSeconds > 0) {
+            $hours = intdiv($durationSeconds, 3600);
+            $minutes = intdiv($durationSeconds % 3600, 60);
+            $seconds = $durationSeconds % 60;
+            $durationString = $hours > 0
+                ? sprintf('%d:%02d:%02d', $hours, $minutes, $seconds)
+                : sprintf('%d:%02d', $minutes, $seconds);
+        }
         $thumbnails = is_array($entry['thumbnails'] ?? null) ? $entry['thumbnails'] : [];
         $lastThumbnail = end($thumbnails);
 
         $items[] = [
             'title' => (string) ($entry['title'] ?? $videoId),
             'webpage_url' => 'https://www.youtube.com/watch?v=' . $videoId,
-            'duration_string' => $durationSeconds > 0
-                ? sprintf('%d:%02d', intdiv($durationSeconds, 60), $durationSeconds % 60)
-                : '',
+            'duration_string' => $durationString,
             'thumbnail' => is_array($lastThumbnail) ? (string) ($lastThumbnail['url'] ?? '') : '',
             'channel' => (string) ($entry['channel'] ?? $entry['uploader'] ?? ''),
         ];

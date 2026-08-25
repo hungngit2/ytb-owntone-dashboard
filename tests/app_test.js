@@ -153,7 +153,7 @@ assert.strictEqual(parseDurationStringToSeconds('-5:10'), 0, 'returns 0 for nega
 
 assert.strictEqual(formatTime(225), '3:45', 'formats seconds to M:SS');
 assert.strictEqual(formatTime(45), '0:45', 'formats <60 seconds with leading zero');
-assert.strictEqual(formatTime(3930), '65:30', 'formats >60 minutes');
+assert.strictEqual(formatTime(3930), '1:05:30', 'formats >60 minutes as H:MM:SS');
 assert.strictEqual(formatTime(0), '0:00', 'formats 0 seconds');
 assert.strictEqual(formatTime(-10), '0:00', 'formats negative seconds as 0:00');
 assert.strictEqual(formatTime(NaN), '0:00', 'formats NaN as 0:00');
