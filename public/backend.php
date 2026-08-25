@@ -941,6 +941,11 @@ function handle_resolve_url(string $url): void
 
     $oembed = fetch_youtube_oembed($url);
     $streamUrl = get_cached_stream_url($url);
+    if ($streamUrl === null) {
+        $resolved = resolve_all_stream_variants($url);
+        cache_resolved_stream_variants($url, $resolved['audio'], $resolved['progressive']);
+        $streamUrl = $resolved['audio'];
+    }
     $durationSeconds = $streamUrl !== null ? extract_stream_url_duration_seconds($streamUrl) : 0.0;
     $durationString = '';
     if ($durationSeconds > 0) {

@@ -317,6 +317,40 @@ function saveLocalQueue() {
   writeLocalStorageJson(LS_KEYS.queue, localQueue);
 }
 
+function backfillMissingDurations(items) {
+  if (!Array.isArray(items) || items.length === 0 || typeof YOUTUBE_API_KEY === 'undefined' || !YOUTUBE_API_KEY) {
+    return;
+  }
+  const missing = items.filter((item) => !item.duration_string && item.webpage_url);
+  if (missing.length === 0) {
+    return;
+  }
+  const videoIds = missing.map((item) => extractYoutubeVideoId(item.webpage_url)).filter(Boolean);
+  if (videoIds.length === 0) {
+    return;
+  }
+  fetchDurationsById(videoIds).then((durationById) => {
+    let changed = false;
+    items.forEach((item) => {
+      if (!item.duration_string && item.webpage_url) {
+        const id = extractYoutubeVideoId(item.webpage_url);
+        if (id && durationById[id]) {
+          item.duration_string = durationById[id];
+          changed = true;
+        }
+      }
+    });
+    if (changed) {
+      if (isLocalMode()) {
+        saveLocalQueue();
+        if (currentView === 'search') {
+          renderResults();
+        }
+      }
+    }
+  }).catch(() => {});
+}
+
 function loadLocalQueue() {
   const stored = readLocalStorageJson(LS_KEYS.queue, null);
   if (stored && Array.isArray(stored.items) && Number.isInteger(stored.current_index)) {
@@ -324,6 +358,7 @@ function loadLocalQueue() {
     if (!Number.isFinite(localQueue.progress_seconds)) {
       localQueue.progress_seconds = 0;
     }
+    backfillMissingDurations(localQueue.items);
   }
 }
 
@@ -359,6 +394,7 @@ function saveLocalSearchResults() {
 
 function loadLocalSearchResults() {
   searchResults = readLocalStorageJson(LS_KEYS.searchResults, []);
+  backfillMissingDurations(searchResults);
   if (currentView === 'search') {
     renderResults();
   }
@@ -370,6 +406,13 @@ function saveLocalPlaylists() {
 
 function loadLocalPlaylistsFromStorage() {
   localPlaylists = readLocalStorageJson(LS_KEYS.playlists, []);
+  if (Array.isArray(localPlaylists)) {
+    localPlaylists.forEach((p) => {
+      if (Array.isArray(p.items)) {
+        backfillMissingDurations(p.items);
+      }
+    });
+  }
 }
 
 function saveLocalPlaybackPrefs() {

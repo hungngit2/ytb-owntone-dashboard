@@ -8,7 +8,7 @@ enforce_dashboard_auth();
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>YouTube → OwnTone Dashboard</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=<?= file_exists(__DIR__ . '/style.css') ? filemtime(__DIR__ . '/style.css') : '1' ?>">
 </head>
 <body>
   <main id="app">
@@ -148,6 +148,6 @@ enforce_dashboard_auth();
   </main>
 
   <script src="config.js"></script>
-  <script src="app.js"></script>
+  <script src="app.js?v=<?= file_exists(__DIR__ . '/app.js') ? filemtime(__DIR__ . '/app.js') : '1' ?>"></script>
 </body>
 </html>
