@@ -2455,6 +2455,7 @@ async function playLocalQueueItem(items, index, triggerBtn) {
     renderNowPlaying();
     applyLocalPlayerState(true, audio.currentTime || 0, getLocalTrackDurationSeconds());
     document.getElementById('search-input').value = '';
+    prefetchNextQueueTracks();
   } catch (err) {
     if (err && err.name === 'AbortError') {
       // AbortError happens when a play() promise is superseded by a subsequent load/play
@@ -2571,6 +2572,7 @@ async function playQueueItem(items, index, triggerBtn) {
     serverQueue = { items, current_index: index, shuffle: shuffleEnabled };
     renderNowPlaying();
     document.getElementById('search-input').value = '';
+    prefetchNextQueueTracks();
   } catch (err) {
     titleEl.classList.remove('loading');
     showError('Play request failed');
@@ -2789,19 +2791,42 @@ function updateProgressDisplay(progressSeconds, durationSeconds) {
 // past. Single spot (called from updateProgressDisplay, which both the
 // OwnTone progress ticker and Local mode's 'timeupdate' feed into) so
 // both playback modes get this for free.
-const STREAM_PREFETCH_LEAD_SECONDS = 8;
-let prefetchedStreamForUrl = null;
+const STREAM_PREFETCH_LEAD_SECONDS = 45;
+const prefetchedStreamUrls = new Set();
 
 function prefetchStreamUrl(webpageUrl) {
-  if (!webpageUrl || prefetchedStreamForUrl === webpageUrl) {
+  if (!webpageUrl || prefetchedStreamUrls.has(webpageUrl)) {
     return;
   }
-  prefetchedStreamForUrl = webpageUrl;
+  prefetchedStreamUrls.add(webpageUrl);
   fetch('backend.php', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: `action=prefetch_stream_url&url=${encodeURIComponent(webpageUrl)}`,
-  }).catch(() => {});
+  }).catch(() => {
+    prefetchedStreamUrls.delete(webpageUrl);
+  });
+}
+
+function prefetchNextQueueTracks() {
+  if (!autoAdvanceEnabled) {
+    return;
+  }
+  const queue = isLocalMode() ? localQueue : serverQueue;
+  if (!queue || !Array.isArray(queue.items) || queue.items.length === 0) {
+    return;
+  }
+  const nextIndex = nextLocalQueueIndex(queue.current_index, queue.items.length, shuffleEnabled, repeatMode);
+  if (nextIndex !== null && queue.items[nextIndex] && queue.items[nextIndex].webpage_url) {
+    prefetchStreamUrl(queue.items[nextIndex].webpage_url);
+
+    const afterNextIndex = nextLocalQueueIndex(nextIndex, queue.items.length, shuffleEnabled, repeatMode);
+    if (afterNextIndex !== null && afterNextIndex !== nextIndex && queue.items[afterNextIndex] && queue.items[afterNextIndex].webpage_url) {
+      setTimeout(() => {
+        prefetchStreamUrl(queue.items[afterNextIndex].webpage_url);
+      }, 3000);
+    }
+  }
 }
 
 function maybePrefetchNextStream(progressSeconds, durationSeconds) {
@@ -2812,12 +2837,7 @@ function maybePrefetchNextStream(progressSeconds, durationSeconds) {
   if (remaining <= 0 || remaining > STREAM_PREFETCH_LEAD_SECONDS) {
     return;
   }
-  const queue = isLocalMode() ? localQueue : serverQueue;
-  const nextIndex = nextLocalQueueIndex(queue.current_index, queue.items.length, shuffleEnabled, repeatMode);
-  const nextItem = nextIndex !== null ? queue.items[nextIndex] : null;
-  if (nextItem && nextItem.webpage_url) {
-    prefetchStreamUrl(nextItem.webpage_url);
-  }
+  prefetchNextQueueTracks();
 }
 
 async function seekTo(targetSeconds) {

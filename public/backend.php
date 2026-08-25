@@ -1043,6 +1043,30 @@ function handle_prefetch_stream_url(string $url): void
     echo json_encode(['status' => 'ok']);
 }
 
+function handle_resolve_stream_url(string $url): void
+{
+    if (!is_youtube_url($url)) {
+        http_response_code(400);
+        echo json_encode(['status' => 'error', 'message' => 'not a valid YouTube URL']);
+        return;
+    }
+
+    $streamUrl = get_cached_stream_url($url);
+    if ($streamUrl === null) {
+        $resolved = resolve_all_stream_variants($url);
+        cache_resolved_stream_variants($url, $resolved['audio'], $resolved['progressive']);
+        $streamUrl = $resolved['audio'];
+    }
+
+    if ($streamUrl === null) {
+        http_response_code(502);
+        echo json_encode(['status' => 'error', 'message' => 'could not resolve a direct stream url']);
+        return;
+    }
+
+    echo json_encode(['status' => 'ok', 'stream_url' => $streamUrl]);
+}
+
 // Powers the quality-picker modal (status-badge click): resolves (or
 // reuses the cache) and reports every progressive video quality actually
 // available for this video, so the frontend can offer exactly those —
@@ -1385,6 +1409,31 @@ function parse_stream_variants_from_formats(array $formats): array
 // Returns ['audio' => ?string, 'progressive' => [['height' => int, 'url' => string], ...]]
 function resolve_all_stream_variants(string $youtubeUrl): array
 {
+    $cachedAudio = get_cached_stream_url($youtubeUrl);
+    if ($cachedAudio !== null) {
+        return ['audio' => $cachedAudio, 'progressive' => get_cached_progressive_variants($youtubeUrl)];
+    }
+
+    $lockPath = sys_get_temp_dir() . '/ytb_res_' . md5($youtubeUrl) . '.lock';
+    $lockFp = @fopen($lockPath, 'c+');
+    if ($lockFp !== false && flock($lockFp, LOCK_EX)) {
+        try {
+            $cachedAudio = get_cached_stream_url($youtubeUrl);
+            if ($cachedAudio !== null) {
+                return ['audio' => $cachedAudio, 'progressive' => get_cached_progressive_variants($youtubeUrl)];
+            }
+            $json = (string) shell_exec(build_resolve_all_formats_cmd($youtubeUrl));
+            $data = json_decode($json, true);
+            $formats = is_array($data['formats'] ?? null) ? $data['formats'] : [];
+            $result = parse_stream_variants_from_formats($formats);
+            cache_resolved_stream_variants($youtubeUrl, $result['audio'], $result['progressive']);
+            return $result;
+        } finally {
+            flock($lockFp, LOCK_UN);
+            fclose($lockFp);
+        }
+    }
+
     $json = (string) shell_exec(build_resolve_all_formats_cmd($youtubeUrl));
     $data = json_decode($json, true);
     $formats = is_array($data['formats'] ?? null) ? $data['formats'] : [];
@@ -1414,31 +1463,42 @@ function extract_stream_url_duration_seconds(string $streamUrl): float
 // resolve_all_stream_variants) but are cached/expired independently.
 function cache_resolved_stream_variants(string $youtubeUrl, ?string $audioStreamUrl, array $progressiveVariants, string $path = RESOLVED_STREAM_CACHE_FILE): void
 {
-    $cache = read_json_file($path);
-    if (!is_array($cache)) {
-        $cache = [];
-    }
-    $entry = is_array($cache[$youtubeUrl] ?? null) ? $cache[$youtubeUrl] : [];
-    if ($audioStreamUrl !== null) {
-        $entry['stream_url'] = $audioStreamUrl;
-        $entry['duration_seconds'] = extract_stream_url_duration_seconds($audioStreamUrl);
-    }
-    if (!empty($progressiveVariants)) {
-        $entry['progressive'] = array_map(function ($variant) {
-            return [
-                'height' => $variant['height'],
-                'url' => $variant['url'],
-                'duration_seconds' => extract_stream_url_duration_seconds($variant['url']),
-            ];
-        }, $progressiveVariants);
-    }
-    $cache[$youtubeUrl] = $entry;
-
     $dir = dirname($path);
     if (!is_dir($dir)) {
         mkdir($dir, 0755, true);
     }
-    file_put_contents($path, json_encode($cache));
+    $fp = @fopen($path, 'c+');
+    if ($fp === false) {
+        return;
+    }
+    if (flock($fp, LOCK_EX)) {
+        $contents = stream_get_contents($fp);
+        $cache = $contents !== '' ? json_decode($contents, true) : [];
+        if (!is_array($cache)) {
+            $cache = [];
+        }
+        $entry = is_array($cache[$youtubeUrl] ?? null) ? $cache[$youtubeUrl] : [];
+        if ($audioStreamUrl !== null) {
+            $entry['stream_url'] = $audioStreamUrl;
+            $entry['duration_seconds'] = extract_stream_url_duration_seconds($audioStreamUrl);
+        }
+        if (!empty($progressiveVariants)) {
+            $entry['progressive'] = array_map(function ($variant) {
+                return [
+                    'height' => $variant['height'],
+                    'url' => $variant['url'],
+                    'duration_seconds' => extract_stream_url_duration_seconds($variant['url']),
+                ];
+            }, $progressiveVariants);
+        }
+        $cache[$youtubeUrl] = $entry;
+        ftruncate($fp, 0);
+        rewind($fp);
+        fwrite($fp, json_encode($cache));
+        fflush($fp);
+        flock($fp, LOCK_UN);
+    }
+    fclose($fp);
 }
 
 // Pure: does this resolved CDN url's own expire= timestamp leave enough
@@ -2150,6 +2210,8 @@ if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
         handle_list_video_qualities((string) ($_POST['url'] ?? ''));
     } elseif ($action === 'prefetch_stream_url') {
         handle_prefetch_stream_url((string) ($_POST['url'] ?? ''));
+    } elseif ($action === 'resolve_stream_url') {
+        handle_resolve_stream_url((string) ($_POST['url'] ?? ''));
     } elseif ($action === 'owntone_player') {
         handle_owntone_player();
     } elseif ($action === 'owntone_queue') {
