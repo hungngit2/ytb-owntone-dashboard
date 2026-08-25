@@ -275,8 +275,6 @@ function build_play_pipeline_cmd(
     return sprintf('nohup sh -c %s > /dev/null 2>&1 &', escapeshellarg($combined));
 }
 
-// Downloads straight to a temp path, then renames into place atomically —
-// so a concurrent play never sees (and uses) a half-written cache file.
 function build_preload_cmd(string $youtubeUrl, string $cachePath): string
 {
     $tmpPath = $cachePath . '.part';
@@ -289,6 +287,23 @@ function build_preload_cmd(string $youtubeUrl, string $cachePath): string
     );
 
     return sprintf('nohup sh -c %s > /dev/null 2>&1 &', escapeshellarg($cmd));
+}
+
+// Spawns a background PHP CLI process to pre-resolve direct CDN stream URLs into
+// the stream cache without blocking the caller or web request.
+function build_prefetch_stream_cmd(string $youtubeUrl): string
+{
+    $script = realpath(__DIR__ . '/backend.php');
+    if ($script === false) {
+        $script = __DIR__ . '/backend.php';
+    }
+    $cmd = sprintf(
+        'php %s prefetch_cli %s',
+        escapeshellarg($script),
+        escapeshellarg($youtubeUrl)
+    );
+
+    return sprintf('nohup %s > /dev/null 2>&1 &', $cmd);
 }
 
 function build_yt_dlp_duration_cmd(string $youtubeUrl): string
@@ -1905,6 +1920,23 @@ function maybe_preload_next(array $items, int $currentIndex, bool $shuffle, stri
     $nextUrl = next_preload_target($items, $currentIndex, $shuffle, $repeat);
     $nextCachePath = $nextUrl !== null ? audio_cache_path($nextUrl) : null;
 
+    // Pre-resolve direct stream URL for the upcoming track so play-next / auto-advance transitions seamlessly
+    if ($nextUrl !== null && is_youtube_url($nextUrl)) {
+        if (get_cached_stream_url($nextUrl) === null && running_ytdlp_count() < MAX_CONCURRENT_YTDLP) {
+            shell_exec(build_prefetch_stream_cmd($nextUrl));
+        } else {
+            // If the immediate next track is already resolved in cache, pre-warm the track after next (N+2)
+            $nextIndex = $currentIndex + 1;
+            if ($nextIndex >= count($items) && $repeat === 'all') {
+                $nextIndex = 0;
+            }
+            $afterNextUrl = next_preload_target($items, $nextIndex, $shuffle, $repeat);
+            if ($afterNextUrl !== null && is_youtube_url($afterNextUrl) && get_cached_stream_url($afterNextUrl) === null && running_ytdlp_count() < MAX_CONCURRENT_YTDLP) {
+                shell_exec(build_prefetch_stream_cmd($afterNextUrl));
+            }
+        }
+    }
+
     // Never the current or next track's cache, or their in-flight .part
     // downloads — anything else is a stray leftover from a track that's
     // moved on.
@@ -1982,6 +2014,7 @@ function handle_set_shuffle(bool $shuffle): void
 {
     $state = load_queue_state();
     save_queue_state($state['items'], $state['current_index'], $shuffle, $state['repeat'], QUEUE_STATE_FILE, $state['auto_advance']);
+    maybe_preload_next($state['items'], $state['current_index'], $shuffle, $state['repeat']);
     echo json_encode(['status' => 'ok']);
 }
 
@@ -1994,6 +2027,7 @@ function handle_set_repeat(string $repeat): void
     }
     $state = load_queue_state();
     save_queue_state($state['items'], $state['current_index'], $state['shuffle'], $repeat, QUEUE_STATE_FILE, $state['auto_advance']);
+    maybe_preload_next($state['items'], $state['current_index'], $state['shuffle'], $repeat);
     echo json_encode(['status' => 'ok']);
 }
 
@@ -2029,8 +2063,12 @@ function handle_queue_play_next(array $item): void
         $state = load_queue_state();
         $items = insert_item_after($state['items'], $state['current_index'], $entry);
         save_queue_state($items, $state['current_index'], $state['shuffle'], $state['repeat'], QUEUE_STATE_FILE, $state['auto_advance']);
-        return ['items' => $items];
+        return ['items' => $items, 'current_index' => $state['current_index'], 'shuffle' => $state['shuffle'], 'repeat' => $state['repeat']];
     });
+
+    if (isset($result['items'])) {
+        maybe_preload_next($result['items'], $result['current_index'], $result['shuffle'], $result['repeat']);
+    }
 
     echo json_encode(['status' => 'ok', 'items' => $result['items'] ?? []]);
 }
@@ -2043,11 +2081,14 @@ function handle_queue_play_next(array $item): void
 // either way), so this stays best-effort rather than surfacing errors.
 function handle_queue_reorder(array $items, int $currentIndex): void
 {
-    with_playback_lock(function () use ($items, $currentIndex) {
+    $result = with_playback_lock(function () use ($items, $currentIndex) {
         $state = load_queue_state();
         save_queue_state($items, $currentIndex, $state['shuffle'], $state['repeat'], QUEUE_STATE_FILE, $state['auto_advance']);
-        return [];
+        return ['items' => $items, 'current_index' => $currentIndex, 'shuffle' => $state['shuffle'], 'repeat' => $state['repeat']];
     });
+    if (isset($result['items'])) {
+        maybe_preload_next($result['items'], $result['current_index'], $result['shuffle'], $result['repeat']);
+    }
     echo json_encode(['status' => 'ok']);
 }
 
@@ -2125,7 +2166,13 @@ function advance_queue_if_finished(): void
     }
 }
 
-if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
+if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__ || (php_sapi_name() === 'cli' && isset($argv[1]) && $argv[1] === 'prefetch_cli')) {
+    if (php_sapi_name() === 'cli' && ($argv[1] ?? '') === 'prefetch_cli') {
+        $cliUrl = $argv[2] ?? '';
+        handle_prefetch_stream_url($cliUrl);
+        exit(0);
+    }
+
     enforce_dashboard_auth();
 
     // Real browser-navigable GET routes (window.open/<img>/<audio> src

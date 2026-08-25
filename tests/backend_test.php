@@ -487,4 +487,11 @@ assert_true(array_column($insertedClampedLow, 'title') === ['X', 'a', 'b'], 'ins
 $insertedClampedHigh = insert_item_after([['title' => 'a'], ['title' => 'b']], 99, ['title' => 'X']);
 assert_true(array_column($insertedClampedHigh, 'title') === ['a', 'b', 'X'], 'insert_item_after clamps an out-of-range afterIndex to the end');
 
+$prefetchCmd = build_prefetch_stream_cmd('https://youtu.be/dQw4w9WgXcQ');
+assert_true(strpos($prefetchCmd, 'prefetch_cli') !== false, 'build_prefetch_stream_cmd includes prefetch_cli');
+assert_true(strpos($prefetchCmd, 'nohup') === 0, 'build_prefetch_stream_cmd starts with nohup');
+assert_true(strpos($prefetchCmd, 'https://youtu.be/dQw4w9WgXcQ') !== false, 'build_prefetch_stream_cmd includes escaped URL');
+assert_true(substr(trim($prefetchCmd), -1) === '&', 'build_prefetch_stream_cmd runs in background');
+
 echo "All backend helper tests passed.\n";
+

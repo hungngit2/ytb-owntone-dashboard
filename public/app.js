@@ -896,6 +896,7 @@ function persistReorder(items) {
     } else {
       persistServerQueueOrder(queue.items, queue.current_index);
     }
+    prefetchNextQueueTracks();
   }
 }
 
@@ -2803,6 +2804,11 @@ function prefetchStreamUrl(webpageUrl) {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: `action=prefetch_stream_url&url=${encodeURIComponent(webpageUrl)}`,
+  }).then(() => {
+    // Allow re-prefetching after 10 minutes (in case cache expires during long sessions)
+    setTimeout(() => {
+      prefetchedStreamUrls.delete(webpageUrl);
+    }, 600000);
   }).catch(() => {
     prefetchedStreamUrls.delete(webpageUrl);
   });
