@@ -6,7 +6,6 @@ YouTube URL, save songs into named playlists, and play through OwnTone —
 or entirely in the browser, without OwnTone at all, via a "Local" mode
 toggle.
 
-![Dashboard screenshot](docs/screenshot.png)
 
 ## How it works
 
