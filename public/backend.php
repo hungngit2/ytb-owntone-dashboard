@@ -43,6 +43,11 @@ if (!defined('DASHBOARD_AUTH_PASSWORD')) {
 if (!defined('DASHBOARD_FORCE_AUTH_FOR_LOCAL')) {
     define('DASHBOARD_FORCE_AUTH_FOR_LOCAL', false);
 }
+// Optional, untracked — define performance or general overrides here.
+// Copy dashboard-config.example.php to dashboard-config.php and fill it in.
+if (file_exists(__DIR__ . '/dashboard-config.php')) {
+    require __DIR__ . '/dashboard-config.php';
+}
 // All host-side app state lives under one parent directory now (pipes/
 // data/cache subfolders), outside nginx's document root and deliberately
 // NOT under /opt/docker/owntone/pipes: that path traverses
@@ -93,7 +98,9 @@ define('PLAYBACK_LOCK_FILE', '/mnt/appsrv/ytb-owntone/data/playback.lock');
 // what the lock alone prevents. This is the last line of defense against
 // that regardless of which code path or how many concurrent requests
 // triggered it.
-define('MAX_CONCURRENT_YTDLP', 2);
+if (!defined('MAX_CONCURRENT_YTDLP')) {
+    define('MAX_CONCURRENT_YTDLP', 2);
+}
 // A bare "ffmpeg" is NOT a safe pkill/pgrep pattern on this host: it also
 // runs Jellyfin, whose own ffmpeg processes (transcoding, thumbnail
 // generation) run continuously and match "ffmpeg" as a plain substring
@@ -1165,7 +1172,9 @@ function handle_owntone_stream(): void
 // and --playlist-end caps a Mix's effectively endless list to something
 // reasonable to display. `timeout` guards a synchronous request against a
 // hung yt-dlp process.
-define('MIX_PLAYLIST_MAX_ITEMS', 50);
+if (!defined('MIX_PLAYLIST_MAX_ITEMS')) {
+    define('MIX_PLAYLIST_MAX_ITEMS', 50);
+}
 // Confirmed live: under php-fpm's shell_exec, wrapping a bare "yt-dlp"
 // with a "timeout" prefix fails to resolve yt-dlp (exit 127) even though
 // a bare "yt-dlp" alone (no timeout wrapper) resolves fine, and even
