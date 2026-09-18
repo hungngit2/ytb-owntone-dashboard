@@ -99,7 +99,7 @@ define('PLAYBACK_LOCK_FILE', '/mnt/appsrv/ytb-owntone/data/playback.lock');
 // that regardless of which code path or how many concurrent requests
 // triggered it.
 if (!defined('MAX_CONCURRENT_YTDLP')) {
-    define('MAX_CONCURRENT_YTDLP', 2);
+    define('MAX_CONCURRENT_YTDLP', 5);
 }
 // A bare "ffmpeg" is NOT a safe pkill/pgrep pattern on this host: it also
 // runs Jellyfin, whose own ffmpeg processes (transcoding, thumbnail
