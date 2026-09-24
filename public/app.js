@@ -2804,7 +2804,7 @@ function updateProgressDisplay(progressSeconds, durationSeconds) {
 // past. Single spot (called from updateProgressDisplay, which both the
 // OwnTone progress ticker and Local mode's 'timeupdate' feed into) so
 // both playback modes get this for free.
-const STREAM_PREFETCH_LEAD_SECONDS = 45;
+const STREAM_PREFETCH_LEAD_SECONDS = 90;
 const prefetchedStreamUrls = new Set();
 
 function prefetchStreamUrl(webpageUrl) {
@@ -2834,15 +2834,23 @@ function prefetchNextQueueTracks() {
   if (!queue || !Array.isArray(queue.items) || queue.items.length === 0) {
     return;
   }
-  const nextIndex = nextLocalQueueIndex(queue.current_index, queue.items.length, shuffleEnabled, repeatMode);
-  if (nextIndex !== null && queue.items[nextIndex] && queue.items[nextIndex].webpage_url) {
-    prefetchStreamUrl(queue.items[nextIndex].webpage_url);
+  const queueCount = typeof STREAM_PREFETCH_QUEUE_COUNT === 'number' && STREAM_PREFETCH_QUEUE_COUNT > 0
+    ? STREAM_PREFETCH_QUEUE_COUNT
+    : 2;
 
-    const afterNextIndex = nextLocalQueueIndex(nextIndex, queue.items.length, shuffleEnabled, repeatMode);
-    if (afterNextIndex !== null && afterNextIndex !== nextIndex && queue.items[afterNextIndex] && queue.items[afterNextIndex].webpage_url) {
+  let currentIndex = queue.current_index;
+  for (let i = 0; i < queueCount; i++) {
+    const nextIndex = nextLocalQueueIndex(currentIndex, queue.items.length, shuffleEnabled, repeatMode);
+    if (nextIndex === null || nextIndex === currentIndex) {
+      break;
+    }
+    currentIndex = nextIndex;
+    const item = queue.items[currentIndex];
+    if (item && item.webpage_url) {
+      const delay = i * 1500;
       setTimeout(() => {
-        prefetchStreamUrl(queue.items[afterNextIndex].webpage_url);
-      }, 3000);
+        prefetchStreamUrl(item.webpage_url);
+      }, delay);
     }
   }
 }

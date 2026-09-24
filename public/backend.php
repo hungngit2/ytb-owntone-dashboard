@@ -1430,6 +1430,47 @@ function parse_stream_variants_from_formats(array $formats): array
     return ['audio' => $bestAudioUrl, 'progressive' => $progressive];
 }
 
+function timed_shell_exec(string $cmd, int $timeoutSeconds = 20): string
+{
+    $descriptors = [
+        0 => ['pipe', 'r'],
+        1 => ['pipe', 'w'],
+        2 => ['pipe', 'w'],
+    ];
+    $process = proc_open($cmd, $descriptors, $pipes);
+    if (!is_resource($process)) {
+        return '';
+    }
+    fclose($pipes[0]);
+    stream_set_blocking($pipes[1], false);
+    stream_set_blocking($pipes[2], false);
+
+    $output = '';
+    $startTime = time();
+    while (true) {
+        $read = [$pipes[1], $pipes[2]];
+        $write = null;
+        $except = null;
+        $numChanged = stream_select($read, $write, $except, 1);
+        if ($numChanged > 0) {
+            $output .= stream_get_contents($pipes[1]);
+        }
+        $status = proc_get_status($process);
+        if (!$status['running']) {
+            $output .= stream_get_contents($pipes[1]);
+            break;
+        }
+        if (time() - $startTime > $timeoutSeconds) {
+            proc_terminate($process, 9);
+            break;
+        }
+    }
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    proc_close($process);
+    return $output;
+}
+
 // Returns ['audio' => ?string, 'progressive' => [['height' => int, 'url' => string], ...]]
 function resolve_all_stream_variants(string $youtubeUrl): array
 {
@@ -1446,7 +1487,7 @@ function resolve_all_stream_variants(string $youtubeUrl): array
             if ($cachedAudio !== null) {
                 return ['audio' => $cachedAudio, 'progressive' => get_cached_progressive_variants($youtubeUrl)];
             }
-            $json = (string) shell_exec(build_resolve_all_formats_cmd($youtubeUrl));
+            $json = (string) timed_shell_exec(build_resolve_all_formats_cmd($youtubeUrl), 20);
             $data = json_decode($json, true);
             $formats = is_array($data['formats'] ?? null) ? $data['formats'] : [];
             $result = parse_stream_variants_from_formats($formats);
@@ -1458,7 +1499,7 @@ function resolve_all_stream_variants(string $youtubeUrl): array
         }
     }
 
-    $json = (string) shell_exec(build_resolve_all_formats_cmd($youtubeUrl));
+    $json = (string) timed_shell_exec(build_resolve_all_formats_cmd($youtubeUrl), 20);
     $data = json_decode($json, true);
     $formats = is_array($data['formats'] ?? null) ? $data['formats'] : [];
 
