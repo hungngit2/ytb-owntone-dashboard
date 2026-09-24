@@ -2944,6 +2944,18 @@ async function refreshPlayerState() {
 
 let wsReconnectTimer = null;
 let wsReconnectDelayMs = 2000;
+let wsHeartbeatTimer = null;
+
+function startWsHeartbeat() {
+  clearInterval(wsHeartbeatTimer);
+  wsHeartbeatTimer = setInterval(() => {
+    if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
+      try {
+        wsConnection.send(JSON.stringify({ ping: true }));
+      } catch (err) {}
+    }
+  }, 25000);
+}
 
 // The websocket only pushes on OwnTone's own state changes — if the
 // connection ever drops (network blip, OwnTone restart, proxy timeout)
@@ -2972,6 +2984,7 @@ function connectWebSocket() {
     wsReconnectDelayMs = 2000;
     ws.send(JSON.stringify({ notify: ['player', 'queue', 'volume'] }));
     refreshPlayerState();
+    startWsHeartbeat();
   });
 
   ws.addEventListener('message', () => {
@@ -2981,9 +2994,8 @@ function connectWebSocket() {
   ws.addEventListener('close', () => {
     wsConnection = null;
     statusEl.classList.remove('ws-connected');
-    if (!isLocalMode()) {
-      scheduleWebSocketReconnect();
-    }
+    clearInterval(wsHeartbeatTimer);
+    scheduleWebSocketReconnect();
   });
 
   ws.addEventListener('error', () => {
