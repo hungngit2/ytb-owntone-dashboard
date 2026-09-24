@@ -2283,6 +2283,26 @@ if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__ || (php_sapi_name()
         handle_owntone_stream();
         return;
     }
+    if ($getAction === 'get_suggestions') {
+        header('Content-Type: application/json');
+        $q = $_GET['q'] ?? '';
+        if (trim($q) === '') {
+            echo json_encode([]);
+            return;
+        }
+        $url = 'https://suggestqueries.google.com/complete/search?client=firefox&q=' . urlencode($q);
+        $ch = curl_init($url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 3);
+        $response = curl_exec($ch);
+        curl_close($ch);
+        if ($response === false) {
+            echo json_encode([]);
+            return;
+        }
+        echo $response;
+        return;
+    }
 
     header('Content-Type: application/json');
     $action = $_POST['action'] ?? '';

@@ -2975,7 +2975,7 @@ let suggestionSelectedIdx = -1;
 
 async function fetchSuggestions(query) {
   try {
-    const res = await fetch(`https://suggestqueries.google.com/complete/search?client=firefox&q=${encodeURIComponent(query)}`);
+    const res = await fetch(`backend.php?action=get_suggestions&q=${encodeURIComponent(query)}`);
     const data = await res.json();
     return Array.isArray(data) && Array.isArray(data[1]) ? data[1] : [];
   } catch (err) {
