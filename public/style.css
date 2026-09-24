@@ -556,17 +556,14 @@ body {
 }
 
 #search-suggestions {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 52px;
+  position: fixed;
   background: var(--bg-card, #1e293b);
   border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4);
   max-height: 240px;
   overflow-y: auto;
-  z-index: 100;
+  z-index: 9999;
   display: flex;
   flex-direction: column;
 }

@@ -86,7 +86,6 @@ enforce_dashboard_auth();
         <form id="search-form">
           <input id="search-input" type="text" placeholder="Search or paste a YouTube link..." autocomplete="off">
           <button id="search-btn" type="submit" aria-label="Search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>
-          <div id="search-suggestions" class="suggestions-dropdown" hidden></div>
         </form>
       </div>
     </div>
@@ -148,6 +147,7 @@ enforce_dashboard_auth();
     </div>
   </main>
 
+  <div id="search-suggestions" class="suggestions-dropdown" hidden></div>
   <script src="config.js"></script>
   <script src="app.js?v=<?= file_exists(__DIR__ . '/app.js') ? filemtime(__DIR__ . '/app.js') : '1' ?>"></script>
 </body>

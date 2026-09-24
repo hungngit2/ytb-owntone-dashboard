@@ -2983,6 +2983,16 @@ async function fetchSuggestions(query) {
   }
 }
 
+function positionSuggestions() {
+  const input = document.getElementById('search-input');
+  const container = document.getElementById('search-suggestions');
+  if (!input || !container) return;
+  const rect = input.getBoundingClientRect();
+  container.style.top = (rect.bottom + 4) + 'px';
+  container.style.left = rect.left + 'px';
+  container.style.width = rect.width + 'px';
+}
+
 function renderSuggestions(suggestions) {
   const container = document.getElementById('search-suggestions');
   container.innerHTML = '';
@@ -3002,6 +3012,7 @@ function renderSuggestions(suggestions) {
     });
     container.appendChild(div);
   });
+  positionSuggestions();
   container.hidden = false;
 }
 
@@ -3065,6 +3076,13 @@ if (typeof document !== 'undefined') {
       searchSuggestions.hidden = true;
     }
   });
+
+  window.addEventListener('resize', () => {
+    if (!searchSuggestions.hidden) positionSuggestions();
+  });
+  window.addEventListener('scroll', () => {
+    if (!searchSuggestions.hidden) positionSuggestions();
+  }, true);
 
   document.getElementById('search-form').addEventListener('submit', (event) => {
     event.preventDefault();
