@@ -2973,27 +2973,14 @@ function connectWebSocket() {
 
 let suggestionSelectedIdx = -1;
 
-function fetchSuggestions(query) {
-  return new Promise((resolve) => {
-    const callbackName = '_yt_suggest_' + Math.random().toString(36).substring(2);
-    const script = document.createElement('script');
-    window[callbackName] = (data) => {
-      delete window[callbackName];
-      document.body.removeChild(script);
-      if (data && data[1]) {
-        resolve(data[1].map(item => item[0]));
-      } else {
-        resolve([]);
-      }
-    };
-    script.onerror = () => {
-      delete window[callbackName];
-      if (script.parentNode) document.body.removeChild(script);
-      resolve([]);
-    };
-    script.src = `https://suggestqueries.google.com/complete/search?client=youtube&ds=yt&q=${encodeURIComponent(query)}&jsonp=${callbackName}`;
-    document.body.appendChild(script);
-  });
+async function fetchSuggestions(query) {
+  try {
+    const res = await fetch(`https://suggestqueries.google.com/complete/search?client=firefox&q=${encodeURIComponent(query)}`);
+    const data = await res.json();
+    return Array.isArray(data) && Array.isArray(data[1]) ? data[1] : [];
+  } catch (err) {
+    return [];
+  }
 }
 
 function renderSuggestions(suggestions) {
