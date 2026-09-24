@@ -2407,10 +2407,11 @@ function handleLocalTrackEnded() {
 }
 
 async function playLocalQueueItem(items, index, triggerBtn) {
-  if (playRequestInFlight) {
+  if (checkPlayRequestInFlight()) {
     return;
   }
   playRequestInFlight = true;
+  playRequestStartedAt = Date.now();
   if (triggerBtn) {
     triggerBtn.innerHTML = '<span class="spinner"></span>';
   }
@@ -2498,6 +2499,14 @@ function reflectAutoAdvanceUI() {
 // source is what actually prevents it, rather than relying on the
 // backend to absorb it after the fact.
 let playRequestInFlight = false;
+let playRequestStartedAt = 0;
+
+function checkPlayRequestInFlight() {
+  if (playRequestInFlight && Date.now() - playRequestStartedAt > 8000) {
+    playRequestInFlight = false;
+  }
+  return playRequestInFlight;
+}
 
 // Playing a whole playlist should make the Queue tab reflect exactly
 // what's now playing — otherwise switching to Queue afterwards would
@@ -2527,10 +2536,11 @@ async function playQueueItem(items, index, triggerBtn) {
     return playLocalQueueItem(items, index, triggerBtn);
   }
 
-  if (playRequestInFlight) {
+  if (checkPlayRequestInFlight()) {
     return;
   }
   playRequestInFlight = true;
+  playRequestStartedAt = Date.now();
   if (triggerBtn) {
     triggerBtn.innerHTML = '<span class="spinner"></span>';
   }
