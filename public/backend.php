@@ -1655,6 +1655,86 @@ function owntone_request_status(string $path, string $method): int
     return $status;
 }
 
+function owntone_put_json(string $path, array $data): void
+{
+    $ch = curl_init(OWNTONE_BASE . $path);
+    curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'PUT');
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+    apply_owntone_auth($ch);
+    curl_exec($ch);
+    curl_close($ch);
+}
+
+function check_and_manage_airplay_outputs(): void
+{
+    $outputsData = owntone_get('/api/outputs');
+    $outputs = $outputsData['outputs'] ?? [];
+    if (!is_array($outputs) || empty($outputs)) {
+        return;
+    }
+
+    $airplayOutputs = array_filter($outputs, function ($o) {
+        $type = strtolower($o['type'] ?? '');
+        return strpos($type, 'airplay') !== false || strpos($type, 'raop') !== false;
+    });
+    if (empty($airplayOutputs)) {
+        $airplayOutputs = $outputs;
+    }
+
+    $left = null;
+    $right = null;
+    $otherAirplay = [];
+
+    foreach ($airplayOutputs as $o) {
+        $name = strtolower($o['name'] ?? '');
+        if (strpos($name, 'left') !== false) {
+            $left = $o;
+        } elseif (strpos($name, 'right') !== false) {
+            $right = $o;
+        } else {
+            $otherAirplay[] = $o;
+        }
+    }
+
+    if ($left === null && $right === null && count($airplayOutputs) === 2) {
+        $airplayList = array_values($airplayOutputs);
+        $left = $airplayList[0];
+        $right = $airplayList[1];
+    } elseif ($left !== null && $right === null && count($otherAirplay) === 1 && count($airplayOutputs) === 2) {
+        $right = $otherAirplay[0];
+    } elseif ($right !== null && $left === null && count($otherAirplay) === 1 && count($airplayOutputs) === 2) {
+        $left = $otherAirplay[0];
+    }
+
+    $hasTwo = ($left !== null && $right !== null);
+    $allAirplay = array_values($airplayOutputs);
+    $onlyOne = (count($allAirplay) === 1 || (!$hasTwo && count($allAirplay) === 1));
+
+    if ($hasTwo) {
+        $leftSelected = (bool) ($left['selected'] ?? false);
+        $rightSelected = (bool) ($right['selected'] ?? false);
+        $leftChannels = strtolower($left['channels'] ?? $left['channel'] ?? '');
+        $rightChannels = strtolower($right['channels'] ?? $right['channel'] ?? '');
+
+        if (!$leftSelected || !$rightSelected || $leftChannels !== 'left' || $rightChannels !== 'right') {
+            owntone_put_json('/api/outputs/' . $left['id'], ['selected' => true, 'channels' => 'left']);
+            owntone_put_json('/api/outputs/' . $right['id'], ['selected' => true, 'channels' => 'right']);
+        }
+    } elseif ($onlyOne || count($allAirplay) === 1) {
+        $device = $onlyOne ? ($left ?? $right ?? $allAirplay[0]) : $allAirplay[0];
+        $selected = (bool) ($device['selected'] ?? false);
+        $channels = strtolower($device['channels'] ?? $device['channel'] ?? '');
+
+        if (!$selected || ($channels !== '' && $channels !== 'unset')) {
+            owntone_put_json('/api/outputs/' . $device['id'], ['selected' => true, 'channels' => '']);
+        }
+    }
+}
+
+
 function owntone_post_status(string $path): int
 {
     return owntone_request_status($path, 'POST');
@@ -1790,6 +1870,7 @@ function play_url_body(string $url, int $startAtSeconds, ?string $cachedAudioPat
 {
     stop_existing_pipeline();
     reset_confirmed_playing();
+    check_and_manage_airplay_outputs();
 
     $oembed = fetch_youtube_oembed($url);
     $title = $oembed['title'] ?? '';
@@ -2134,6 +2215,9 @@ function advance_queue_if_finished(): void
         }
 
         $player = owntone_get('/api/player');
+        if (($player['state'] ?? '') === 'play') {
+            check_and_manage_airplay_outputs();
+        }
         $hasConfirmedPlaying = mark_confirmed_playing_if_active($player);
 
         $isDirect = is_current_track_direct();

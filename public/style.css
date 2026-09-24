@@ -550,8 +550,55 @@ body {
 /* ---- Search ---- */
 
 #search-form {
+  position: relative;
   display: flex;
   gap: 8px;
+}
+
+#search-suggestions {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 52px;
+  background: var(--bg-card, #1e293b);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4);
+  max-height: 240px;
+  overflow-y: auto;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+}
+
+#search-suggestions[hidden] {
+  display: none;
+}
+
+.suggestion-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.suggestion-item:hover,
+.suggestion-item.selected {
+  background: rgba(99, 102, 241, 0.15);
+  color: var(--accent);
+}
+
+.suggestion-item svg {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  opacity: 0.6;
 }
 
 #search-input {

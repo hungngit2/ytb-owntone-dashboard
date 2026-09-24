@@ -2971,26 +2971,120 @@ function connectWebSocket() {
   });
 }
 
+let suggestionSelectedIdx = -1;
+
+function fetchSuggestions(query) {
+  return new Promise((resolve) => {
+    const callbackName = '_yt_suggest_' + Math.random().toString(36).substring(2);
+    const script = document.createElement('script');
+    window[callbackName] = (data) => {
+      delete window[callbackName];
+      document.body.removeChild(script);
+      if (data && data[1]) {
+        resolve(data[1].map(item => item[0]));
+      } else {
+        resolve([]);
+      }
+    };
+    script.onerror = () => {
+      delete window[callbackName];
+      if (script.parentNode) document.body.removeChild(script);
+      resolve([]);
+    };
+    script.src = `https://suggestqueries.google.com/complete/search?client=youtube&ds=yt&q=${encodeURIComponent(query)}&jsonp=${callbackName}`;
+    document.body.appendChild(script);
+  });
+}
+
+function renderSuggestions(suggestions) {
+  const container = document.getElementById('search-suggestions');
+  container.innerHTML = '';
+  suggestionSelectedIdx = -1;
+  if (suggestions.length === 0) {
+    container.hidden = true;
+    return;
+  }
+  suggestions.slice(0, 8).forEach((text, i) => {
+    const div = document.createElement('div');
+    div.className = 'suggestion-item';
+    div.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><span>${text}</span>`;
+    div.addEventListener('click', () => {
+      document.getElementById('search-input').value = text;
+      submitSearch(text);
+      container.hidden = true;
+    });
+    container.appendChild(div);
+  });
+  container.hidden = false;
+}
+
+function submitSearch(value) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    clearSearchResults();
+    return;
+  }
+  if (isYoutubeMixPlaylistUrl(trimmed)) {
+    resolveYoutubeMixPlaylist(trimmed);
+  } else if (isYoutubePlaylistUrl(trimmed)) {
+    runPlaylistImport(trimmed);
+  } else if (isYoutubeUrl(trimmed)) {
+    resolveUrlToResult(trimmed);
+  } else {
+    runSearch(trimmed);
+  }
+}
+
 if (typeof document !== 'undefined') {
-  document.getElementById('search-form').addEventListener('submit', (event) => {
-    event.preventDefault();
-    const input = document.getElementById('search-input');
-    const value = input.value.trim();
-    if (!value) {
-      clearSearchResults();
+  const searchInput = document.getElementById('search-input');
+  const searchSuggestions = document.getElementById('search-suggestions');
+  let debounceTimer;
+
+  searchInput.addEventListener('input', (e) => {
+    clearTimeout(debounceTimer);
+    const val = e.target.value.trim();
+    if (!val) {
+      searchSuggestions.hidden = true;
       return;
     }
+    debounceTimer = setTimeout(async () => {
+      const suggestions = await fetchSuggestions(val);
+      renderSuggestions(suggestions);
+    }, 300);
+  });
 
-    if (isYoutubeMixPlaylistUrl(value)) {
-      resolveYoutubeMixPlaylist(value);
-    } else if (isYoutubePlaylistUrl(value)) {
-      runPlaylistImport(value);
-    } else if (isYoutubeUrl(value)) {
-      resolveUrlToResult(value);
-    } else {
-      runSearch(value);
+  searchInput.addEventListener('keydown', (e) => {
+    const items = searchSuggestions.querySelectorAll('.suggestion-item');
+    if (searchSuggestions.hidden) return;
+    if (e.key === 'ArrowDown') {
+      suggestionSelectedIdx = Math.min(suggestionSelectedIdx + 1, items.length - 1);
+      items.forEach((it, i) => it.classList.toggle('selected', i === suggestionSelectedIdx));
+    } else if (e.key === 'ArrowUp') {
+      suggestionSelectedIdx = Math.max(suggestionSelectedIdx - 1, -1);
+      items.forEach((it, i) => it.classList.toggle('selected', i === suggestionSelectedIdx));
+    } else if (e.key === 'Enter' && suggestionSelectedIdx >= 0) {
+      e.preventDefault();
+      const selected = items[suggestionSelectedIdx].querySelector('span').textContent;
+      searchInput.value = selected;
+      submitSearch(selected);
+      searchSuggestions.hidden = true;
+    } else if (e.key === 'Escape') {
+      searchSuggestions.hidden = true;
     }
   });
+
+  document.addEventListener('click', (e) => {
+    if (!searchInput.contains(e.target) && !searchSuggestions.contains(e.target)) {
+      searchSuggestions.hidden = true;
+    }
+  });
+
+  document.getElementById('search-form').addEventListener('submit', (event) => {
+    event.preventDefault();
+    submitSearch(searchInput.value);
+    searchSuggestions.hidden = true;
+  });
+
 
   document.getElementById('tab-search').addEventListener('click', () => switchView('search'));
   document.getElementById('tab-playlist').addEventListener('click', () => switchView('playlist'));
