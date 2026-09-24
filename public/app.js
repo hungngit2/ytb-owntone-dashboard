@@ -2406,7 +2406,7 @@ function handleLocalTrackEnded() {
   playQueueItem(localQueue.items, nextIndex);
 }
 
-async function playLocalQueueItem(items, index, triggerBtn) {
+function playLocalQueueItem(items, index, triggerBtn) {
   if (checkPlayRequestInFlight()) {
     return;
   }
@@ -2417,63 +2417,65 @@ async function playLocalQueueItem(items, index, triggerBtn) {
   }
 
   const titleEl = document.getElementById('now-title');
-  titleEl.classList.add('loading');
-  setNowTitleText('Loading...');
-  document.getElementById('disc').classList.add('loading');
+  if (titleEl) {
+    titleEl.classList.add('loading');
+    setNowTitleText('Loading...');
+  }
+  const discEl = document.getElementById('disc');
+  if (discEl) {
+    discEl.classList.add('loading');
+  }
 
   const item = items[index];
   const audio = document.getElementById('browser-stream-audio');
   const itemDuration = parseDurationStringToSeconds(item.duration_string);
 
-  try {
-    currentTrackInfo = {
-      title: item.title || null,
-      thumbnail: item.thumbnail || null,
-      channel: item.channel || null,
-      webpageUrl: item.webpage_url,
-      durationString: item.duration_string || null,
-      durationSeconds: itemDuration || null,
-    };
-    localQueue = { items, current_index: index, progress_seconds: 0 };
-    saveLocalQueue();
+  currentTrackInfo = {
+    title: item.title || null,
+    thumbnail: item.thumbnail || null,
+    channel: item.channel || null,
+    webpageUrl: item.webpage_url,
+    durationString: item.duration_string || null,
+    durationSeconds: itemDuration || null,
+  };
+  localQueue = { items, current_index: index, progress_seconds: 0 };
+  saveLocalQueue();
 
-    updateMediaSessionMetadata(item.title, item.channel, item.thumbnail);
-    syncMediaSessionPlaybackState(true);
+  updateMediaSessionMetadata(item.title, item.channel, item.thumbnail);
+  syncMediaSessionPlaybackState(true);
 
-    clearInterval(progressTickTimer);
-    updateProgressDisplay(0, itemDuration);
+  clearInterval(progressTickTimer);
+  updateProgressDisplay(0, itemDuration);
 
-    audio.src = `backend.php?action=stream_redirect&url=${encodeURIComponent(item.webpage_url)}`;
-    audio.volume = Number(document.getElementById('volume-slider').value) / 100;
-    // stream-btn's "Listen in browser" feature shares this same <audio>
-    // element and can leave .muted stuck true — volume changes have no
-    // audible effect while that's set, independent of .volume (confirmed
-    // live: this silently broke Local mode volume after using stream-btn).
-    audio.muted = false;
-    await audio.play();
+  audio.src = `backend.php?action=stream_redirect&url=${encodeURIComponent(item.webpage_url)}`;
+  audio.volume = Number(document.getElementById('volume-slider').value) / 100;
+  audio.muted = false;
 
-    titleEl.classList.remove('loading');
-    document.getElementById('disc').classList.remove('loading');
+  audio.play().then(() => {
+    if (titleEl) titleEl.classList.remove('loading');
+    if (discEl) discEl.classList.remove('loading');
     renderNowPlaying();
     applyLocalPlayerState(true, audio.currentTime || 0, getLocalTrackDurationSeconds());
-    document.getElementById('search-input').value = '';
+    const searchInput = document.getElementById('search-input');
+    if (searchInput) searchInput.value = '';
     prefetchNextQueueTracks();
-  } catch (err) {
+  }).catch((err) => {
     if (err && err.name === 'AbortError') {
-      // AbortError happens when a play() promise is superseded by a subsequent load/play
       return;
     }
-    titleEl.classList.remove('loading');
-    document.getElementById('disc').classList.remove('loading');
+    if (titleEl) titleEl.classList.remove('loading');
+    if (discEl) discEl.classList.remove('loading');
     showError('Could not play direct stream');
     renderNowPlaying();
     applyLocalPlayerState(false, 0, 0);
-  } finally {
+  }).finally(() => {
     playRequestInFlight = false;
     if (triggerBtn) {
       triggerBtn.innerHTML = ICONS.play;
     }
-  }
+  });
+
+  fillQueueTabFromPlaylist(items);
 }
 
 let shuffleEnabled = false;
