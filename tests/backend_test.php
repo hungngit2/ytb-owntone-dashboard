@@ -77,7 +77,7 @@ assert_true(audio_cache_path('https://youtu.be/dQw4w9WgXcQ', '/tmp/cache') === '
 assert_true(audio_cache_path('not a url', '/tmp/cache') === null, 'audio_cache_path returns null when no video id can be extracted');
 
 $resolveCmd = build_resolve_all_formats_cmd('https://youtu.be/dQw4w9WgXcQ');
-assert_true(str_contains($resolveCmd, YTDLP_BIN . ' --no-playlist -j'), 'resolve cmd dumps every format\'s metadata (including urls) via -j in one call');
+assert_true(str_contains($resolveCmd, YTDLP_BIN . ' --no-playlist --extractor-args "youtube:player_client=android" -j'), 'resolve cmd dumps every format\'s metadata (including urls) via -j in one call');
 assert_true(str_starts_with($resolveCmd, TIMEOUT_BIN), 'resolve cmd is guarded by an absolute-path timeout');
 assert_true(str_contains($resolveCmd, "'https://youtu.be/dQw4w9WgXcQ'"), 'resolve cmd embeds the target url');
 

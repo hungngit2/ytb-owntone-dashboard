@@ -1368,7 +1368,7 @@ function stop_existing_pipeline(): void
 function build_resolve_all_formats_cmd(string $youtubeUrl): string
 {
     return sprintf(
-        '%s 20 %s --no-playlist -j %s 2>/dev/null',
+        '%s 20 %s --no-playlist --extractor-args "youtube:player_client=android" -j %s 2>/dev/null',
         TIMEOUT_BIN,
         YTDLP_BIN,
         escapeshellarg($youtubeUrl)
