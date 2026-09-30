@@ -1731,9 +1731,6 @@ function check_and_manage_airplay_outputs(): void
     }
     file_put_contents($cooldownFile, (string) $now);
 
-    // If outputs are not selecting properly, try restarting R1 services first
-    restart_r1_speaker_services();
-
     $outputsData = owntone_get('/api/outputs');
     $outputs = $outputsData['outputs'] ?? [];
     if (!is_array($outputs) || empty($outputs)) {
@@ -2385,6 +2382,7 @@ if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__ || (php_sapi_name()
             (int) ($_POST['repeat'] ?? 0)
         );
     } elseif ($action === 'reconnect_airplay') {
+        restart_r1_speaker_services();
         check_and_manage_airplay_outputs();
         echo json_encode(['status' => 'ok']);
 
