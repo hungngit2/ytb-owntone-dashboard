@@ -2255,10 +2255,6 @@ function advance_queue_if_finished(): void
             return ['advanced' => false];
         }
 
-        $player = owntone_get('/api/player');
-        if (($player['state'] ?? '') === 'play') {
-            check_and_manage_airplay_outputs();
-        }
         $hasConfirmedPlaying = mark_confirmed_playing_if_active($player);
 
         $isDirect = is_current_track_direct();
