@@ -1709,8 +1709,31 @@ function owntone_put_json(string $path, array $data): void
     curl_close($ch);
 }
 
+function restart_r1_speaker_services(): void
+{
+    $speakers = ['10.0.1.1', '10.0.1.2'];
+    foreach ($speakers as $ip) {
+        @shell_exec("adb connect {$ip}:5555 2>&1");
+        @shell_exec("adb -s {$ip}:5555 shell \"am force-stop com.autodlna || true\" 2>&1");
+        @shell_exec("adb -s {$ip}:5555 shell \"am force-stop com.example.echoservice || true\" 2>&1");
+    }
+}
+
 function check_and_manage_airplay_outputs(): void
 {
+    $cooldownFile = sys_get_temp_dir() . '/owntone_airplay_last_attempt.txt';
+    $now = time();
+    if (file_exists($cooldownFile)) {
+        $lastAttempt = (int) file_get_contents($cooldownFile);
+        if ($now - $lastAttempt < 30) {
+            return;
+        }
+    }
+    file_put_contents($cooldownFile, (string) $now);
+
+    // If outputs are not selecting properly, try restarting R1 services first
+    restart_r1_speaker_services();
+
     $outputsData = owntone_get('/api/outputs');
     $outputs = $outputsData['outputs'] ?? [];
     if (!is_array($outputs) || empty($outputs)) {
@@ -2255,6 +2278,10 @@ function advance_queue_if_finished(): void
             return ['advanced' => false];
         }
 
+        $player = owntone_get('/api/player');
+        if (($player['state'] ?? '') === 'play') {
+            check_and_manage_airplay_outputs();
+        }
         $hasConfirmedPlaying = mark_confirmed_playing_if_active($player);
 
         $isDirect = is_current_track_direct();
@@ -2353,10 +2380,14 @@ if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__ || (php_sapi_name()
         $items = json_decode((string) ($_POST['items'] ?? '[]'), true);
         handle_play_queue(
             is_array($items) ? $items : [],
-            (int) ($_POST['index'] ?? -1),
+            (int) ($_POST['startIndex'] ?? 0),
             (bool) ($_POST['shuffle'] ?? false),
-            (string) ($_POST['repeat'] ?? 'off')
+            (int) ($_POST['repeat'] ?? 0)
         );
+    } elseif ($action === 'reconnect_airplay') {
+        check_and_manage_airplay_outputs();
+        echo json_encode(['status' => 'ok']);
+
     } elseif ($action === 'set_shuffle') {
         handle_set_shuffle((bool) ($_POST['shuffle'] ?? false));
     } elseif ($action === 'set_repeat') {
