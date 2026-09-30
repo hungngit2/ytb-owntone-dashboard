@@ -3535,11 +3535,3 @@ function resumeLocalPlaybackFromStorage() {
   renderNowPlaying();
   updateProgressDisplay(resumeAt, itemDuration);
 }
-
-function reconnectAirplay() {
-  fetch('backend.php', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: 'action=reconnect_airplay',
-  });
-}

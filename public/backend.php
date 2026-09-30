@@ -1721,16 +1721,6 @@ function restart_r1_speaker_services(): void
 
 function check_and_manage_airplay_outputs(): void
 {
-    $cooldownFile = sys_get_temp_dir() . '/owntone_airplay_last_attempt.txt';
-    $now = time();
-    if (file_exists($cooldownFile)) {
-        $lastAttempt = (int) file_get_contents($cooldownFile);
-        if ($now - $lastAttempt < 30) {
-            return;
-        }
-    }
-    file_put_contents($cooldownFile, (string) $now);
-
     $outputsData = owntone_get('/api/outputs');
     $outputs = $outputsData['outputs'] ?? [];
     if (!is_array($outputs) || empty($outputs)) {
@@ -1741,6 +1731,7 @@ function check_and_manage_airplay_outputs(): void
         $type = strtolower($o['type'] ?? '');
         return strpos($type, 'airplay') !== false || strpos($type, 'raop') !== false;
     });
+
     if (empty($airplayOutputs)) {
         $airplayOutputs = $outputs;
     }
@@ -1774,6 +1765,7 @@ function check_and_manage_airplay_outputs(): void
     $allAirplay = array_values($airplayOutputs);
     $onlyOne = (count($allAirplay) === 1 || (!$hasTwo && count($allAirplay) === 1));
 
+    $needsUpdate = false;
     if ($hasTwo) {
         $leftSelected = (bool) ($left['selected'] ?? false);
         $rightSelected = (bool) ($right['selected'] ?? false);
@@ -1781,8 +1773,7 @@ function check_and_manage_airplay_outputs(): void
         $rightChannels = strtolower($right['channels'] ?? $right['channel'] ?? '');
 
         if (!$leftSelected || !$rightSelected || $leftChannels !== 'left' || $rightChannels !== 'right') {
-            owntone_put_json('/api/outputs/' . $left['id'], ['selected' => true, 'channels' => 'left']);
-            owntone_put_json('/api/outputs/' . $right['id'], ['selected' => true, 'channels' => 'right']);
+            $needsUpdate = true;
         }
     } elseif ($onlyOne || count($allAirplay) === 1) {
         $device = $onlyOne ? ($left ?? $right ?? $allAirplay[0]) : $allAirplay[0];
@@ -1790,6 +1781,71 @@ function check_and_manage_airplay_outputs(): void
         $channels = strtolower($device['channels'] ?? $device['channel'] ?? '');
 
         if (!$selected || ($channels !== '' && $channels !== 'unset')) {
+            $needsUpdate = true;
+        }
+    }
+
+    // Attempt to restart R1 speakers and correct outputs if configured incorrectly
+    if ($needsUpdate || count($airplayOutputs) < 2) {
+        $cooldownFile = sys_get_temp_dir() . '/owntone_airplay_last_attempt.txt';
+        $now = time();
+        if (file_exists($cooldownFile)) {
+            $lastAttempt = (int) file_get_contents($cooldownFile);
+            if ($now - $lastAttempt < 30) {
+                return;
+            }
+        }
+        file_put_contents($cooldownFile, (string) $now);
+        restart_r1_speaker_services();
+        
+        // Re-fetch outputs after wait to apply setting below
+        sleep(2);
+        $outputsData = owntone_get('/api/outputs');
+        $outputs = $outputsData['outputs'] ?? [];
+
+        $airplayOutputs = array_filter($outputs, function ($o) {
+            $type = strtolower($o['type'] ?? '');
+            return strpos($type, 'airplay') !== false || strpos($type, 'raop') !== false;
+        });
+
+        if (empty($airplayOutputs)) {
+            $airplayOutputs = $outputs;
+        }
+
+        $left = null;
+        $right = null;
+        $otherAirplay = [];
+
+        foreach ($airplayOutputs as $o) {
+            $name = strtolower($o['name'] ?? '');
+            if (strpos($name, 'left') !== false) {
+                $left = $o;
+            } elseif (strpos($name, 'right') !== false) {
+                $right = $o;
+            } else {
+                $otherAirplay[] = $o;
+            }
+        }
+
+        if ($left === null && $right === null && count($airplayOutputs) === 2) {
+            $airplayList = array_values($airplayOutputs);
+            $left = $airplayList[0];
+            $right = $airplayList[1];
+        } elseif ($left !== null && $right === null && count($otherAirplay) === 1 && count($airplayOutputs) === 2) {
+            $right = $otherAirplay[0];
+        } elseif ($right !== null && $left === null && count($otherAirplay) === 1 && count($airplayOutputs) === 2) {
+            $left = $otherAirplay[0];
+        }
+
+        $hasTwo = ($left !== null && $right !== null);
+        $allAirplay = array_values($airplayOutputs);
+        $onlyOne = (count($allAirplay) === 1 || (!$hasTwo && count($allAirplay) === 1));
+
+        if ($hasTwo) {
+            owntone_put_json('/api/outputs/' . $left['id'], ['selected' => true, 'channels' => 'left']);
+            owntone_put_json('/api/outputs/' . $right['id'], ['selected' => true, 'channels' => 'right']);
+        } elseif ($onlyOne || count($allAirplay) === 1) {
+            $device = $onlyOne ? ($left ?? $right ?? $allAirplay[0]) : $allAirplay[0];
             owntone_put_json('/api/outputs/' . $device['id'], ['selected' => true, 'channels' => '']);
         }
     }
@@ -2381,11 +2437,6 @@ if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__ || (php_sapi_name()
             (bool) ($_POST['shuffle'] ?? false),
             (int) ($_POST['repeat'] ?? 0)
         );
-    } elseif ($action === 'reconnect_airplay') {
-        restart_r1_speaker_services();
-        check_and_manage_airplay_outputs();
-        echo json_encode(['status' => 'ok']);
-
     } elseif ($action === 'set_shuffle') {
         handle_set_shuffle((bool) ($_POST['shuffle'] ?? false));
     } elseif ($action === 'set_repeat') {

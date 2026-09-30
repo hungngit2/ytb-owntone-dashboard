@@ -37,9 +37,6 @@ enforce_dashboard_auth();
             </button>
             <span id="status-badge">IDLE</span>
             <span id="fifo-badge" title="Playing via the fifo pipeline (direct stream unavailable for this track)" hidden>FIFO</span>
-            <button id="airplay-reconnect-btn" class="icon-btn" aria-label="Reconnect AirPlay" title="Reconnect AirPlay Speakers (Phicomm)" onclick="reconnectAirplay()">
-              <svg viewBox="0 0 24 24"><path d="M12 2.7l-9 5.4 9 5.4 9-5.4-9-5.4zm0 13l-9-5.4v3.6L12 19.3l9-5.4v-3.6l-9 5.4z"/></svg>
-            </button>
             <span id="ws-status" title="OwnTone connection status">●</span>
             <button id="stream-btn" aria-label="Listen in browser" title="Listen in browser (direct stream)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor" stroke="none"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg></button>
           </div>
